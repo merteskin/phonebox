@@ -87,6 +87,37 @@ def tick():
         push("positions", {"title": "OKX pozisyonlar", "items": items or [{"label": "Açık pozisyon yok", "value": ""}]})
         push("pnl", {"title": "Toplam uPnL", "value": f"{total:+,.2f}", "unit": "USDT",
                      "color": "#3ddc84" if total >= 0 else "#ff5252"})
+    else:
+        kriptobot()
+
+
+KRIPTOBOT = os.getenv("KRIPTOBOT_URL", "http://127.0.0.1:8765")  # KriptoBot yerel paneli (salt-okunur GET)
+
+
+def kriptobot():
+    """OKX key yoksa pozisyon/PnL'i KriptoBot panelinin /api/summary'sinden alır. Key'e dokunmaz, sadece GET."""
+    try:
+        s = http(KRIPTOBOT + "/api/summary")
+    except Exception:
+        return
+    px = {k: v.get("last") for k, v in ((s.get("tickers") or {}).get("data") or {}).items()}
+    items, total = [], 0.0
+    live = (s.get("live") or {}).get("data") or {}
+    for p in live.get("positions") or []:
+        upl = float(p.get("upl") or p.get("pnl") or 0); total += upl
+        items.append({"label": f'OKX {p.get("coin", "?")} {p.get("side", "")}', "value": f"{upl:+,.2f}", "level": lvl(upl)})
+    for o in live.get("orders") or []:
+        items.append({"label": f'Limit {o.get("coin", "?")} {o.get("side", "")}', "value": fmt(o.get("px") or o.get("price") or 0)})
+    paper = s.get("paper") or {}
+    for p in paper.get("positions") or []:
+        last, entry, qty = px.get(p.get("coin")), float(p.get("entry") or 0), float(p.get("qty_open") or p.get("qty") or 0)
+        upl = ((last - entry) if p.get("side") == "long" else (entry - last)) * qty if last else 0.0
+        total += upl
+        items.append({"label": f'Kağıt {p["coin"]} {p.get("side", "")}', "value": f"{upl:+,.2f}", "level": lvl(upl)})
+    push("positions", {"title": "KriptoBot pozisyonlar", "items": items or [{"label": "Açık pozisyon yok", "value": ""}]})
+    eq = live.get("equity")
+    push("pnl", {"title": "Toplam uPnL" + (f" · OKX {eq:,.0f}$" if eq else ""), "value": f"{total:+,.2f}", "unit": "USDT",
+                 "color": "#3ddc84" if total >= 0 else "#ff5252"})
 
 
 if __name__ == "__main__":
