@@ -5,7 +5,7 @@
 // (adb reverse) or Wi-Fi to the computer.
 
 const API = '/agent/api';
-const LOCALE = 'en-GB';
+const LOCALE = 'tr-TR';
 const COLS = 12, ROWS = 6;
 const $ = (id) => document.getElementById(id);
 const bridge = typeof Android !== 'undefined' ? Android : null;
@@ -102,7 +102,7 @@ function shortDur(ms) {
   const hr = Math.floor(m / 60);
   return hr < 24 ? `${hr}h ${m % 60}m` : `${Math.floor(hr / 24)}d`;
 }
-const ago = (ts) => { const d = Date.now() - ts; return d < 45_000 ? 'just now' : shortDur(d) + ' ago'; };
+const ago = (ts) => { const d = Date.now() - ts; return d < 45_000 ? 'az önce' : shortDur(d) + ' önce'; };
 const r1 = (v) => (v == null ? '—' : (Math.round(v * 10) / 10).toString());
 const fmtMem = (mb) => (mb >= 1024 ? (mb / 1024).toFixed(1) + ' GB' : Math.round(mb) + ' MB');
 const cssVar = (name) => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
@@ -154,7 +154,7 @@ function chart(canvas, series, opts = {}) {
     g.lineTo(x0, hh);
     g.closePath();
     const grad = g.createLinearGradient(0, 0, 0, hh);
-    grad.addColorStop(0, s.color + '55');
+    grad.addColorStop(0, s.color + 'aa');
     grad.addColorStop(1, s.color + '00');
     g.fillStyle = grad;
     g.fill();
@@ -211,13 +211,13 @@ function metricText(m, s) {
 
 // ---------------------------------------------------------------- weather (Open-Meteo, straight from the phone)
 const WX = {
-  0: ['Clear', '☀️', '🌙'], 1: ['Mostly clear', '🌤️', '🌙'], 2: ['Partly cloudy', '⛅', '☁️'], 3: ['Overcast', '☁️', '☁️'],
-  45: ['Fog', '🌫️'], 48: ['Rime fog', '🌫️'],
-  51: ['Light drizzle', '🌦️'], 53: ['Drizzle', '🌦️'], 55: ['Heavy drizzle', '🌧️'], 56: ['Freezing drizzle', '🌧️'], 57: ['Freezing drizzle', '🌧️'],
-  61: ['Light rain', '🌦️'], 63: ['Rain', '🌧️'], 65: ['Heavy rain', '🌧️'], 66: ['Freezing rain', '🌧️'], 67: ['Freezing rain', '🌧️'],
-  71: ['Light snow', '🌨️'], 73: ['Snow', '🌨️'], 75: ['Heavy snow', '❄️'], 77: ['Snow grains', '🌨️'],
-  80: ['Light showers', '🌦️'], 81: ['Showers', '🌧️'], 82: ['Heavy showers', '⛈️'], 85: ['Snow showers', '🌨️'], 86: ['Heavy snow showers', '❄️'],
-  95: ['Thunderstorm', '⛈️'], 96: ['Thunderstorm, hail', '⛈️'], 99: ['Severe hail', '⛈️'],
+  0: ['Açık', '☀️', '🌙'], 1: ['Çoğunlukla açık', '🌤️', '🌙'], 2: ['Parçalı bulutlu', '⛅', '☁️'], 3: ['Kapalı', '☁️', '☁️'],
+  45: ['Sis', '🌫️'], 48: ['Kırağılı sis', '🌫️'],
+  51: ['Hafif çisenti', '🌦️'], 53: ['Çisenti', '🌦️'], 55: ['Yoğun çisenti', '🌧️'], 56: ['Donan çisenti', '🌧️'], 57: ['Donan çisenti', '🌧️'],
+  61: ['Hafif yağmur', '🌦️'], 63: ['Yağmur', '🌧️'], 65: ['Şiddetli yağmur', '🌧️'], 66: ['Donan yağmur', '🌧️'], 67: ['Donan yağmur', '🌧️'],
+  71: ['Hafif kar', '🌨️'], 73: ['Kar', '🌨️'], 75: ['Yoğun kar', '❄️'], 77: ['Kar taneleri', '🌨️'],
+  80: ['Hafif sağanak', '🌦️'], 81: ['Sağanak', '🌧️'], 82: ['Şiddetli sağanak', '⛈️'], 85: ['Kar sağanağı', '🌨️'], 86: ['Yoğun kar sağanağı', '❄️'],
+  95: ['Gök gürültülü fırtına', '⛈️'], 96: ['Fırtına, dolu', '⛈️'], 99: ['Şiddetli dolu', '⛈️'],
 };
 const wxIcon = (code, day = 1) => { const x = WX[code] || ['—', '🌡️']; return day === 0 && x[2] ? x[2] : x[1]; };
 
@@ -253,16 +253,16 @@ function wxLines() {
     icon: wxIcon(c.weather_code, c.is_day),
     temp: Math.round(c.temperature_2m) + '°',
     desc: `${desc} · ${cfg.weather?.city || ''}`,
-    range: (hi != null ? `↑${hi}° ↓${lo}° · ` : '') + `Feels like ${Math.round(c.apparent_temperature)}°`,
+    range: (hi != null ? `↑${hi}° ↓${lo}° · ` : '') + `Hissedilen ${Math.round(c.apparent_temperature)}°`,
   };
 }
 
 function wxBlock() {
   const e = h('div', 'wx', h('span', 'wx-icon', '·'), h('span', 'wx-temp', '--°'),
-    h('div', 'wx-meta', h('span', 'wx-desc', 'Loading weather…'), h('span', 'wx-range muted')));
+    h('div', 'wx-meta', h('span', 'wx-desc', 'Hava durumu yükleniyor…'), h('span', 'wx-range muted')));
   e.update = () => {
     const l = wxLines();
-    if (!l) { e.querySelector('.wx-desc').textContent = D.weather === null ? 'Loading weather…' : 'Weather unavailable'; return; }
+    if (!l) { e.querySelector('.wx-desc').textContent = D.weather === null ? 'Hava durumu yükleniyor…' : 'Hava durumu alınamadı'; return; }
     e.querySelector('.wx-icon').textContent = l.icon;
     e.querySelector('.wx-temp').textContent = l.temp;
     e.querySelector('.wx-desc').textContent = l.desc;
@@ -351,6 +351,7 @@ const MEDIA_HTML = `
     <div class="art-wrap"><img class="art" alt=""><div class="art-ph">♪</div></div>
     <div class="m-text"><div class="m-app">Media</div><div class="m-title">Nothing playing</div><div class="m-artist">Start something on the PC</div></div>
   </div>
+  <div class="m-wave"><i style="--h:59%;--d:0.2s"></i><i style="--h:68%;--d:0.0s"></i><i style="--h:27%;--d:0.8s"></i><i style="--h:30%;--d:0.5s"></i><i style="--h:92%;--d:0.0s"></i><i style="--h:82%;--d:0.3s"></i><i style="--h:22%;--d:0.1s"></i><i style="--h:73%;--d:0.6s"></i><i style="--h:26%;--d:0.3s"></i><i style="--h:29%;--d:0.8s"></i><i style="--h:72%;--d:0.0s"></i><i style="--h:90%;--d:0.1s"></i><i style="--h:46%;--d:0.9s"></i><i style="--h:25%;--d:0.9s"></i><i style="--h:92%;--d:0.6s"></i><i style="--h:24%;--d:0.3s"></i><i style="--h:23%;--d:0.8s"></i><i style="--h:35%;--d:0.4s"></i><i style="--h:71%;--d:0.2s"></i><i style="--h:87%;--d:0.1s"></i><i style="--h:91%;--d:0.4s"></i><i style="--h:89%;--d:0.2s"></i><i style="--h:31%;--d:0.9s"></i><i style="--h:91%;--d:0.3s"></i><i style="--h:65%;--d:0.1s"></i><i style="--h:88%;--d:0.1s"></i><i style="--h:90%;--d:0.0s"></i><i style="--h:97%;--d:0.3s"></i><i style="--h:81%;--d:0.8s"></i><i style="--h:72%;--d:0.5s"></i><i style="--h:77%;--d:0.9s"></i><i style="--h:76%;--d:0.5s"></i><i style="--h:56%;--d:0.3s"></i><i style="--h:41%;--d:0.3s"></i><i style="--h:28%;--d:0.9s"></i><i style="--h:56%;--d:0.8s"></i><i style="--h:81%;--d:0.5s"></i><i style="--h:75%;--d:0.4s"></i><i style="--h:95%;--d:0.1s"></i><i style="--h:33%;--d:0.8s"></i><i style="--h:71%;--d:0.2s"></i><i style="--h:61%;--d:0.2s"></i><i style="--h:80%;--d:0.6s"></i><i style="--h:23%;--d:0.1s"></i><i style="--h:89%;--d:0.9s"></i><i style="--h:58%;--d:0.5s"></i><i style="--h:62%;--d:0.9s"></i><i style="--h:81%;--d:0.9s"></i><i style="--h:76%;--d:0.1s"></i><i style="--h:29%;--d:0.4s"></i><i style="--h:78%;--d:0.1s"></i><i style="--h:25%;--d:0.4s"></i><i style="--h:100%;--d:0.9s"></i><i style="--h:75%;--d:0.4s"></i><i style="--h:67%;--d:0.5s"></i><i style="--h:20%;--d:0.7s"></i></div>
   <div class="m-progress"><div class="bar"><div class="fill"></div></div><div class="times"><span class="m-pos">0:00</span><span class="m-dur">0:00</span></div></div>
   <div class="m-controls">
     <button class="ic" data-media="prev" aria-label="Previous"><svg viewBox="0 0 24 24"><path d="M6 5h2v14H6zM20 5v14L9.5 12z"/></svg></button>
@@ -565,6 +566,7 @@ function pushView(item) {
     v.unit = d.unit;
     v.color = d.color;
     v.icon = d.icon;
+    v.spark = d.spark;
     v.items = Array.isArray(d.items) ? d.items : undefined;
     v.level = d.level;
     if (typeof d.progress === 'number') v.progress = d.progress > 1 ? d.progress / 100 : d.progress;
@@ -675,7 +677,13 @@ W.clock = {
     const hh = h('span', 'hh', '--'), mm = h('span', 'mm', '--'), ss = h('span', 'sec');
     const date = o.date !== false ? h('div', 'date') : null;
     const wx = o.weather !== false ? wxBlock() : null;
-    box.append(status || '', h('div', 'clock', hh, h('span', 'colon', ':'), mm, ss), date || '', wx || '');
+    const split = o.layout === 'split';
+    const dDay = h('div', 'cd-day'), dMon = h('div', 'cd-mon'), dWd = h('div', 'cd-wd'), dNote = h('div', 'cd-note');
+    if (split) {
+      box.classList.add('clock-split');
+      box.append(status || '', h('div', 'cs-row', h('div', 'cs-date', dDay, dMon, dWd, dNote),
+        h('div', 'cs-main', h('div', 'clock', hh, h('span', 'colon', ':'), mm, ss), wx || '')));
+    } else box.append(status || '', h('div', 'clock', hh, h('span', 'colon', ':'), mm, ss), date || '', wx || '');
     box.style.setProperty('--tf', (0.84 - (status ? 0.1 : 0) - (date ? 0.11 : 0) - (wx ? 0.2 : 0)).toFixed(2));
     return {
       update(kind) {
@@ -685,6 +693,14 @@ W.clock = {
           mm.textContent = pad(now.getMinutes());
           ss.textContent = cfg.display?.showSeconds === false ? '' : pad(now.getSeconds());
           if (date) date.textContent = now.toLocaleDateString(LOCALE, { weekday: 'long', day: 'numeric', month: 'long' });
+          if (split) {
+            dDay.textContent = pad(now.getDate());
+            dMon.textContent = now.toLocaleDateString(LOCALE, { month: 'long' });
+            dWd.textContent = now.toLocaleDateString(LOCALE, { weekday: 'long' });
+            const bot = D.push.kripto?.data?.bot;
+            dNote.textContent = bot ? (bot.phase === 'running' && !bot.paused ? 'Bot aktif' : 'Bot durdu') : `Hafta ${Math.ceil(((now - new Date(now.getFullYear(), 0, 1)) / 864e5 + new Date(now.getFullYear(), 0, 1).getDay() + 1) / 7)}`;
+            dNote.classList.toggle('on', !!bot && bot.phase === 'running' && !bot.paused);
+          }
           if (status && now.getSeconds() % 30 === 0) renderStatus(status); // battery
         } else if (kind === 'weather') wx?.update();
         else if (status) renderStatus(status);
@@ -711,7 +727,7 @@ W.forecast = {
     return {
       update() {
         const w = D.weather;
-        if (!w?.hourly || !w?.daily) { row.replaceChildren(h('div', 'empty', D.weather === null ? 'Loading…' : 'Weather unavailable')); return; }
+        if (!w?.hourly || !w?.daily) { row.replaceChildren(h('div', 'empty', D.weather === null ? 'Loading…' : 'Hava durumu alınamadı')); return; }
         box.querySelector('.w-sub').textContent = cfg.weather?.city || '';
         const vertical = box.clientHeight > box.clientWidth * 0.9;
         const room = vertical ? box.clientHeight - 30 : box.clientWidth - 16;
@@ -721,7 +737,7 @@ W.forecast = {
         if (daily) {
           const d = w.daily;
           for (let i = 0; i < Math.min(n, d.time.length); i++) {
-            const day = i === 0 ? 'Today' : new Date(d.time[i] + 'T12:00').toLocaleDateString(LOCALE, { weekday: 'short' });
+            const day = i === 0 ? 'Bugün' : new Date(d.time[i] + 'T12:00').toLocaleDateString(LOCALE, { weekday: 'short' });
             const rain = d.precipitation_probability_max?.[i];
             cells.push(h('div', 'fc-i', h('span', 'fc-t', day), h('span', 'fc-ic', wxIcon(d.weather_code[i])),
               h('span', 'fc-v', Math.round(d.temperature_2m_max[i]) + '°', h('small', null, ' ' + Math.round(d.temperature_2m_min[i]) + '°')),
@@ -1154,7 +1170,7 @@ W.worldclock = {
           const zoneUtc = Date.UTC(+p.year, +p.month - 1, +p.day, +p.hour, +p.minute);
           const diffH = Math.round((zoneUtc - localUtc) / 360000) / 10;
           const dayDiff = Math.round((Date.UTC(+p.year, +p.month - 1, +p.day) - Date.UTC(now.getFullYear(), now.getMonth(), now.getDate())) / 86400000);
-          const day = dayDiff > 0 ? 'Tomorrow' : dayDiff < 0 ? 'Yesterday' : 'Today';
+          const day = dayDiff > 0 ? 'Yarın' : dayDiff < 0 ? 'Dün' : 'Bugün';
           it.s.textContent = diffH === 0 ? day : `${day}, ${diffH > 0 ? '+' : '−'}${Math.abs(diffH)}h`;
         }
       },
@@ -1373,11 +1389,91 @@ W.push = {
         body = h('div', 'push-big', h('div', 'pv', fmtValue(v.value), unit ? h('small', null, unit) : null),
           v.sub ? h('div', 'ps', String(v.sub)) : null,
           v.progress != null ? h('div', 'track', h('i')) : null);
+        if (Array.isArray(v.spark) && v.spark.length > 1) {
+          const a = v.spark.map(Number), mn = Math.min(...a), mx = Math.max(...a), r = mx - mn || 1, n = a.length - 1;
+          const pts = a.map((y, i) => `${(i / n * 100).toFixed(1)},${(30 - (y - mn) / r * 28).toFixed(1)}`).join(' ');
+          const sp = h('div', 'push-spark');
+          const col = c || 'var(--cpu)';
+          sp.innerHTML = `<svg viewBox="0 0 100 32" preserveAspectRatio="none"><polyline points="0,32 ${pts} 100,32" fill="${col}" fill-opacity=".14"/><polyline points="${pts}" fill="none" stroke="${col}" stroke-width="2" vector-effect="non-scaling-stroke"/></svg>`;
+          body.appendChild(sp);
+        }
         const bar = body.querySelector('.track i');
         if (bar) bar.style.width = Math.max(0, Math.min(100, v.progress * 100)) + '%';
       }
       box.className = box.className.replace(/\bps-\w+/g, '') + ' ps-' + style;
       box.replaceChildren(title, body);
+    };
+    return { update: render };
+  },
+};
+
+// ---------------------------------------------------------------- kripto: KriptoBot/OKX dashboard (push key "kripto")
+const kf = (x, d) => {
+  if (x == null || !Number.isFinite(+x)) return '—';
+  x = +x; const a = Math.abs(x);
+  const dd = d ?? (a >= 1000 ? 0 : a >= 1 ? 2 : a >= 0.01 ? 4 : 6);
+  return x.toLocaleString('en-US', { minimumFractionDigits: dd, maximumFractionDigits: dd });
+};
+const ks = (x, d = 2) => (x == null || !Number.isFinite(+x) ? '—' : (+x >= 0 ? '+' : '−') + kf(Math.abs(+x), d));
+const kcls = (x) => (x == null ? '' : +x > 0 ? 'up' : +x < 0 ? 'dn' : '');
+const ktime = (ts) => { if (!ts) return ''; const d = new Date(ts); return `${pad(d.getDate())}.${pad(d.getMonth() + 1)} ${pad(d.getHours())}:${pad(d.getMinutes())}`; };
+function kspark(arr, up) {
+  const s = h('span', 'kx-sp');
+  if (!arr || arr.length < 2) return s;
+  const mn = Math.min(...arr), mx = Math.max(...arr), r = mx - mn || 1, n = arr.length - 1;
+  const pts = arr.map((v, i) => `${(i / n * 100).toFixed(1)},${(27 - (v - mn) / r * 26).toFixed(1)}`).join(' ');
+  const col = up ? 'var(--ok)' : 'var(--err)';
+  s.innerHTML = `<svg viewBox="0 0 100 28" preserveAspectRatio="none"><polyline points="0,28 ${pts} 100,28" fill="${col}" fill-opacity=".08" stroke="none"/><polyline points="${pts}" fill="none" stroke="${col}" stroke-width="1.5" vector-effect="non-scaling-stroke"/></svg>`;
+  return s;
+}
+const kkpi = (label, val, cls, sub) => h('div', 'kx-kpi', h('div', 'kx-kl', label), h('div', 'kx-kv ' + (cls || ''), val), sub ? h('div', 'kx-ks', sub) : null);
+const ksec = (title, extra, rows) => h('div', 'kx-sec', h('div', 'kx-st', title, extra ? h('span', null, extra) : null),
+  rows.length ? rows : h('div', 'kx-none', 'Yok'));
+const klong = (t) => t === 'long' || t === 'AL' || t === 'buy';
+const krow = (l, m, v, cls, side) => h('div', 'kx-r', side ? h('i', 'kx-tag' + (klong(side) ? ' L' : ''), klong(side) ? 'L' : 'S') : h('i'),
+  h('span', 'kx-rl', l), h('span', 'kx-rm', m || ''), h('span', 'kx-rv ' + (cls || ''), v));
+
+W.kripto = {
+  bare: true, needs: ['push', 'tick'],
+  create(box, { o }) {
+    const key = o.key || 'kripto';
+    let lastAt = -1;
+    const render = () => {
+      const item = D.push[key];
+      if (!item) { if (lastAt !== 0) { lastAt = 0; box.replaceChildren(h('div', 'kx-wait', 'KriptoBot verisi bekleniyor…')); } return; }
+      const age = box.querySelector('.kx-age');
+      if (item.at === lastAt) { if (age) age.textContent = ago(item.at); return; }
+      lastAt = item.at;
+      const d = item.data || {}, k = d.kpi || {}, b = d.bot || {}, f = d.funding || {};
+      const fund = Object.entries(f).map(([c, r]) => `${c} ${r >= 0 ? '+' : ''}${(+r).toFixed(4)}%`).join('   ');
+      const head = h('div', 'kx-head',
+        kkpi('OKX equity', kf(k.equity, 2), 'big', k.avail != null ? `boşta ${kf(k.avail, 0)} USDT` : null),
+        kkpi('Canlı uPnL', ks(k.upnl), kcls(k.upnl), `bugün ${ks(k.d1)}`),
+        kkpi('Realized 7g', ks(k.d7), kcls(k.d7), `30g ${ks(k.d30)}`),
+        kkpi('Win rate 30g', k.win != null ? `${(+k.win).toFixed(0)}%` : '—', '', k.n ? `${k.n} işlem` : null),
+        kkpi('Kağıt bakiye', kf(k.paperBal, 0), '', `uPnL ${ks(k.paperUpnl)}`),
+        kkpi('BTC dominance', k.dom != null ? `${(+k.dom).toFixed(1)}%` : '—', '', null));
+      const coins = h('div', 'kx-coins', h('div', 'kx-cg kx-chd', h('span', null, 'Coin'), h('span', null, 'Fiyat'), h('span', null, '24s'), h('span', null, '24 saat')),
+        (d.coins || []).map((c) => h('div', 'kx-cg kx-c', h('b', null, c.s), h('span', 'kx-px', kf(c.px)),
+          h('span', 'kx-ch24 ' + kcls(c.ch), `${c.ch >= 0 ? '+' : '−'}${Math.abs(c.ch).toFixed(2)}%`), kspark(c.spark, c.ch >= 0))));
+      const pos = (d.pos || []).map((p) => krow(`${p.coin}${p.lev ? ' ' + kf(p.lev, 0) + 'x' : ''}`, `${kf(p.entry)} → ${kf(p.mark)}${p.liq ? ` · liq ${kf(p.liq)}` : ''}`,
+        ks(p.upnl), kcls(p.upnl), p.side));
+      const ord = (d.orders || []).map((x) => krow(`${x.coin} limit${x.lev ? ' ' + kf(x.lev, 0) + 'x' : ''}`, x.dist != null ? `fiyata ${x.dist >= 0 ? '+' : '−'}${Math.abs(x.dist).toFixed(1)}%` : '',
+        kf(x.px), 'info', x.dir));
+      const pap = (d.paper || []).map((p) => krow(p.coin, `${kf(p.entry)} → ${kf(p.mark)}   SL ${kf(p.stop)}`, `${ks(p.upnl)}  (${p.pct >= 0 ? '+' : '−'}${Math.abs(p.pct).toFixed(1)}%)`, kcls(p.upnl), p.side));
+      const cl = (d.closed || []).map((t) => krow(t.coin, `${t.src} · ${ktime(t.at)}`, ks(t.pnl), kcls(t.pnl), t.side));
+      const al = (d.alerts || []).map((a) => h('div', 'kx-al', h('span', 'kx-at', ktime(a.at)), h('b', null, a.coin), h('span', null, a.t)));
+      const right = h('div', 'kx-right',
+        ksec('OKX canlı', `${pos.length} pozisyon · ${ord.length} emir`, [...pos, ...ord]),
+        ksec('Kağıt pozisyonlar', `${pap.length} açık`, pap),
+        ksec('Son kapanışlar', null, cl),
+        ksec('KriptoBot uyarıları', null, al));
+      const ok = b.phase === 'running' && !b.paused && (b.hb ?? 99) < 180;
+      const foot = h('div', 'kx-foot',
+        h('span', 'kx-dot' + (ok ? ' on' : '')), h('span', null, `Bot ${ok ? 'çalışıyor' : (b.paused ? 'duraklatıldı' : b.phase || '?')} · OKX modu ${b.okx || '?'}`),
+        b.next ? h('span', null, `Sıradaki veri: ${b.next.name} · ${ktime(b.next.at)}`) : null,
+        h('span', 'kx-fund', fund ? `Funding   ${fund}` : ''), h('span', 'kx-age', ago(item.at)));
+      box.replaceChildren(h('div', 'kx', head, h('div', 'kx-body', coins, right), foot));
     };
     return { update: render };
   },
@@ -1831,7 +1927,7 @@ W.sun = {
     return {
       update() {
         const d = D.weather?.daily;
-        if (!d?.sunrise) { q('.sl').textContent = D.weather === null ? 'Loading…' : 'Weather unavailable'; return; }
+        if (!d?.sunrise) { q('.sl').textContent = D.weather === null ? 'Loading…' : 'Hava durumu alınamadı'; return; }
         const now = new Date();
         const key = now.getHours() + ':' + now.getMinutes();
         if (key === shown) return;
