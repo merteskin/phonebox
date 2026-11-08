@@ -72,7 +72,7 @@ def tick():
 
     try:
         g = http("https://api.coingecko.com/api/v3/global")["data"]["market_cap_percentage"]
-        push("dominance", {"title": "BTC dominance", "value": round(g["btc"], 2), "unit": "%"}, ttl=1800)
+        push("dominance", {"title": "BTC dominance", "value": f"{g['btc']:.2f}", "unit": "%"}, ttl=1800)
     except Exception:
         pass  # CoinGecko rate limit: sessizce geç
 
@@ -94,30 +94,71 @@ def tick():
 KRIPTOBOT = os.getenv("KRIPTOBOT_URL", "http://127.0.0.1:8765")  # KriptoBot yerel paneli (salt-okunur GET)
 
 
+def pct(x):
+    return f"{x:+.2f}%"
+
+
 def kriptobot():
-    """OKX key yoksa pozisyon/PnL'i KriptoBot panelinin /api/summary'sinden alır. Key'e dokunmaz, sadece GET."""
+    """OKX key yoksa verileri KriptoBot panelinin /api/summary'sinden alır. Key'e dokunmaz, sadece GET.
+    Değerler string gönderilir (panel sayıları yuvarlamasın)."""
     try:
         s = http(KRIPTOBOT + "/api/summary")
     except Exception:
         return
-    px = {k: v.get("last") for k, v in ((s.get("tickers") or {}).get("data") or {}).items()}
-    items, total = [], 0.0
+    tick = ((s.get("tickers") or {}).get("data") or {})
+    px = {k: v.get("last") for k, v in tick.items()}
+
+    # Piyasa: KriptoBot'un izlediği tüm coinler, 24s değişime göre sıralı
+    rows = sorted(tick.items(), key=lambda kv: -(kv[1].get("change") or 0))
+    push("market", {"title": "Piyasa · 24s", "items": [
+        {"label": k, "value": f'{fmt(v["last"])}   {pct((v.get("change") or 0) * 100)}', "level": lvl((v.get("change") or 0) * 100)}
+        for k, v in rows if v.get("last")]})
+
     live = (s.get("live") or {}).get("data") or {}
+    total = 0.0
+    items = []
     for p in live.get("positions") or []:
         upl = float(p.get("upl") or p.get("pnl") or 0); total += upl
-        items.append({"label": f'OKX {p.get("coin", "?")} {p.get("side", "")}', "value": f"{upl:+,.2f}", "level": lvl(upl)})
+        r = p.get("uplRatio") or p.get("upl_ratio")
+        items.append({"label": f'{p.get("coin", "?")} {p.get("side", "")} {p.get("size") or p.get("qty") or ""}  '
+                               f'{fmt(p.get("entry") or p.get("avgPx") or 0)} → {fmt(p.get("mark") or p.get("markPx") or px.get(p.get("coin")) or 0)}',
+                      "value": f"{upl:+,.2f}" + (f" ({float(r) * 100:+.1f}%)" if r is not None else ""), "level": lvl(upl)})
     for o in live.get("orders") or []:
-        items.append({"label": f'Limit {o.get("coin", "?")} {o.get("side", "")}', "value": fmt(o.get("px") or o.get("price") or 0)})
+        last = px.get(o.get("coin"))
+        dist = f"  ({(float(o['px']) / last - 1) * 100:+.1f}%)" if last and o.get("px") else ""
+        items.append({"label": f'Limit {o.get("coin", "?")} {o.get("direction") or o.get("side", "")} {int(o.get("lever") or 0)}x',
+                      "value": f'{fmt(o.get("px") or 0)}{dist}', "level": "info"})
+    push("positions", {"title": "OKX canlı · pozisyon + limit",
+                       "items": items or [{"label": "Açık pozisyon / emir yok", "value": ""}]})
+
     paper = s.get("paper") or {}
+    pitems = []
+    ptotal = 0.0
     for p in paper.get("positions") or []:
-        last, entry, qty = px.get(p.get("coin")), float(p.get("entry") or 0), float(p.get("qty_open") or p.get("qty") or 0)
-        upl = ((last - entry) if p.get("side") == "long" else (entry - last)) * qty if last else 0.0
-        total += upl
-        items.append({"label": f'Kağıt {p["coin"]} {p.get("side", "")}', "value": f"{upl:+,.2f}", "level": lvl(upl)})
-    push("positions", {"title": "KriptoBot pozisyonlar", "items": items or [{"label": "Açık pozisyon yok", "value": ""}]})
+        last, entry = px.get(p.get("coin")), float(p.get("entry") or 0)
+        qty = float(p.get("qty_open") or p.get("qty") or 0)
+        sgn = 1 if p.get("side") == "long" else -1
+        upl = (last - entry) * qty * sgn if last else 0.0
+        ptotal += upl
+        r = (last / entry - 1) * 100 * sgn if last and entry else 0.0
+        pitems.append({"label": f'{p["coin"]} {p.get("side", "")}  {fmt(entry)} → {fmt(last or 0)}',
+                       "value": f"{upl:+,.2f} ({r:+.1f}%)", "level": lvl(upl)})
+    bal = paper.get("balance")
+    push("paper", {"title": "Kağıt" + (f" · bakiye {bal:,.0f}$" if bal else "") + f" · uPnL {ptotal:+,.2f}",
+                   "items": pitems or [{"label": "Açık kağıt pozisyon yok", "value": ""}]})
+
     eq = live.get("equity")
-    push("pnl", {"title": "Toplam uPnL" + (f" · OKX {eq:,.0f}$" if eq else ""), "value": f"{total:+,.2f}", "unit": "USDT",
+    if eq is not None:
+        avail = (live.get("usdt") or {}).get("availEq")
+        push("equity", {"title": "OKX equity" + (f" · boşta {avail:,.0f}" if avail else ""), "value": f"{eq:,.2f}", "unit": "USDT"})
+    push("pnl", {"title": "Canlı uPnL", "value": f"{total:+,.2f}", "unit": "USDT",
                  "color": "#3ddc84" if total >= 0 else "#ff5252"})
+
+    al = []
+    for a in (s.get("alerts") or [])[:6]:
+        t = time.strftime("%d.%m %H:%M", time.localtime(a["created"] / 1000)) if a.get("created") else ""
+        al.append({"label": f'{a.get("coin", "")} · {a.get("title", "")}', "value": t, "level": "warn"})
+    push("alerts", {"title": "KriptoBot uyarıları", "items": al or [{"label": "Uyarı yok", "value": ""}]}, ttl=900)
 
 
 if __name__ == "__main__":
