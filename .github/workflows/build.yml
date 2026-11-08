@@ -48,15 +48,15 @@ jobs:
         run: |
           chmod +x out/PhoneBoxAgent
           out/PhoneBoxAgent > agent.log 2>&1 &
-          for i in $(seq 1 30); do curl -sf http://127.0.0.1:8765/api/state > state.json && break; sleep 1; done
+          for i in $(seq 1 30); do curl -sf http://127.0.0.1:8775/api/state > state.json && break; sleep 1; done
           sleep 4
-          curl -sf http://127.0.0.1:8765/api/state > state.json
-          curl -sf "http://127.0.0.1:8765/api/procs?top=3" > /dev/null; sleep 4
-          curl -sf "http://127.0.0.1:8765/api/procs?top=3" > procs.json
+          curl -sf http://127.0.0.1:8775/api/state > state.json
+          curl -sf "http://127.0.0.1:8775/api/procs?top=3" > /dev/null; sleep 4
+          curl -sf "http://127.0.0.1:8775/api/procs?top=3" > procs.json
           cat agent.log
           head -c 700 state.json; echo
           head -c 500 procs.json; echo
-          curl -sf http://127.0.0.1:8765/api/info; echo
+          curl -sf http://127.0.0.1:8775/api/info; echo
           # the system and process readings must work on this platform
           python3 -c "import json; s=json.load(open('state.json')); p=json.load(open('procs.json')); assert s['pc'] and s['pc']['cpu'] is not None and s['pc']['ramTotalGb'] > 0, s['pc']; assert p['groups'], p; print('cpu', s['pc']['cpu'], 'ram', s['pc']['ramUsedGb'], '/', s['pc']['ramTotalGb'], 'procs', p['total'])"
       - uses: actions/upload-artifact@v4
