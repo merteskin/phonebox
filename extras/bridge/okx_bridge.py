@@ -112,7 +112,17 @@ def kriptobot():
     except Exception:
         return
     try:
-        push("kripto", kripto_board(s))
+        board = kripto_board(s)
+        push("kripto", board)
+        for c in board["coins"]:
+            if c["s"] in ("BTC", "ETH", "SOL"):
+                push("px_" + c["s"].lower(), {"title": c["s"], "value": fmt(c["px"]), "sub": f'{c["ch"]:+.2f}% · 24s',
+                                              "color": "#22c55e" if c["ch"] >= 0 else "#ef4444"})
+        k = board["kpi"]
+        if k.get("d7") is not None:
+            push("realized", {"title": "Realized 7g", "value": f'{k["d7"]:+,.2f}', "unit": "USDT",
+                              "sub": f'30g {k.get("d30") or 0:+,.2f} · win {k.get("win") or 0:.0f}%',
+                              "color": "#22c55e" if k["d7"] >= 0 else "#ef4444"})
     except Exception as e:
         print("kripto board:", e)
     tick = ((s.get("tickers") or {}).get("data") or {})
