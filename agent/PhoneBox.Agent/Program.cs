@@ -2,7 +2,7 @@ using System.Net;
 using System.Text.Json;
 using PhoneBox.Agent;
 
-const int Port = 8765;
+const int Port = 8775; // 8765 is taken by another local app on this PC
 const int UsbPort = 8767; // the phone's 127.0.0.1:8765 is reversed here, never to the settings port
 string[] SameOrigins = [$"http://127.0.0.1:{Port}", $"http://localhost:{Port}"];
 
@@ -76,7 +76,7 @@ app.Use((ctx, next) =>
 });
 
 // Security:
-//  - Local port 8765 listens on 127.0.0.1 only; the Host check blocks DNS rebinding. The phone's USB proxy sends
+//  - Local port 8775 listens on 127.0.0.1 only; the Host check blocks DNS rebinding. The phone's USB proxy sends
 //    no Origin header; from browsers only the settings page itself (same origin) is accepted (no CSRF).
 //  - The optional Wi-Fi port only serves the phone API, only over TLS, and only with the paired token.
 app.UseRouting();

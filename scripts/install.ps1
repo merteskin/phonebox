@@ -93,5 +93,5 @@ if ($Apk) {
 Write-Host '==> Starting agent'
 Start-Process $exe -WorkingDirectory $app
 Start-Sleep 2
-try { Invoke-RestMethod http://127.0.0.1:8765/api/info | Out-Null; Write-Host 'PhoneBox is running. Settings: http://127.0.0.1:8765  (or the tray icon)' }
+try { Invoke-RestMethod http://127.0.0.1:8775/api/info | Out-Null; Write-Host 'PhoneBox is running. Settings: http://127.0.0.1:8775  (or the tray icon)' }
 catch { Write-Warning "The agent did not respond; see $env:LOCALAPPDATA\PhoneBox\agent.log" }

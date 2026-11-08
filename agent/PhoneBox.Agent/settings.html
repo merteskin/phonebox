@@ -897,7 +897,7 @@ setInterval(pollRules, 2000);
 
 // ---------------------------------------------------------------- webhooks
 function renderWebhooks(lan) {
-  const local = `http://127.0.0.1:${location.port || 8765}`;
+  const local = `http://127.0.0.1:${location.port || 8775}`;
   const host = lan?.active && lan.hosts?.length ? `https://${lan.hosts[0]}:${lan.port}` : null;
   const token = cfg.lan?.webhookToken || '';
   const ex = [

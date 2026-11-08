@@ -1,13 +1,13 @@
 """PhoneBox kripto köprüsü: OKX + piyasa verisini PhoneBox agent'ına push'lar.
 
-Yalnızca stdlib. PC'de agent ile aynı makinede çalışır (127.0.0.1:8765).
+Yalnızca stdlib. PC'de agent ile aynı makinede çalışır (127.0.0.1:8775).
 OKX pozisyonları için SADECE "Read" yetkili API key kullan (Trade/Withdraw KAPALI, IP whitelist AÇIK).
 Env: OKX_KEY, OKX_SECRET, OKX_PASS (yoksa pozisyon kısmı atlanır).
 Widget'lar: "Pushed value" ekle, key = btc / funding / positions / pnl / dominance, style = list veya big.
 """
 import base64, datetime as dt, hashlib, hmac, json, os, time, urllib.request
 
-AGENT = os.getenv("PHONEBOX_URL", "http://127.0.0.1:8765")
+AGENT = os.getenv("PHONEBOX_URL", "http://127.0.0.1:8775")
 OKX = "https://www.okx.com"
 INST = os.getenv("BRIDGE_INST", "BTC-USDT-SWAP,ETH-USDT-SWAP,SOL-USDT-SWAP").split(",")
 ALERTS = json.loads(os.getenv("BRIDGE_ALERTS", '{"BTC-USDT-SWAP": 3.0}'))  # inst -> 24s % eşiği

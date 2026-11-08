@@ -7,7 +7,7 @@ namespace PhoneBox.Agent;
 /// <summary>System tray icon: status, settings, logs, start with Windows, quit.</summary>
 public sealed class Tray : IHostedService
 {
-    private const string SettingsUrl = "http://127.0.0.1:8765/";
+    private const string SettingsUrl = "http://127.0.0.1:8775/";
 
     private readonly IHostApplicationLifetime _life;
     private readonly AdbReverse _adb;
