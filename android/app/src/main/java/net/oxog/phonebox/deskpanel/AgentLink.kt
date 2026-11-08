@@ -66,7 +66,8 @@ class AgentLink(context: Context) {
         val c = URL("$USB_BASE$pathAndQuery").openConnection() as HttpURLConnection
         usbAuth(c)
         c.connectTimeout = 400 // refused instantly when no adb reverse tunnel exists
-        send(c, method, readTimeout)
+        // 401/403 = tunnel up but our USB key is stale; treat USB as unusable so Wi-Fi can still serve the panel
+        send(c, method, readTimeout).takeIf { it.code != 401 && it.code != 403 } ?: run { c.disconnect(); null }
     } catch (e: Exception) {
         null
     }

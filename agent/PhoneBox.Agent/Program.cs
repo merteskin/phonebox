@@ -27,7 +27,12 @@ var configPath = args.SkipWhile(a => a != "--config").Skip(1).FirstOrDefault() ?
 var configStore = new ConfigStore(configPath);
 configStore.PersistGenerated(); // keep the Wi-Fi token stable across restarts
 var lanCfg = configStore.Get().Lan;
-var lanCert = lanCfg.Enabled ? Lan.Certificate() : null;
+System.Security.Cryptography.X509Certificates.X509Certificate2? lanCert = null;
+if (lanCfg.Enabled)
+{
+    try { lanCert = Lan.Certificate(); }
+    catch (Exception ex) { Console.Error.WriteLine($"Wi-Fi disabled this run: could not read the TLS certificate ({ex.Message})"); }
+}
 
 var builder = WebApplication.CreateBuilder(new WebApplicationOptions
 {

@@ -206,6 +206,9 @@ public sealed partial class ConfigStore(string path)
     private readonly Lock _lock = new();
     private AgentConfig _config = Normalize(new AgentConfig());
     private DateTime _stamp = DateTime.MinValue;
+    // false until the file has been read once: until then _config holds defaults with fresh random tokens,
+    // which must never be written over a real config.json that was only temporarily unreadable (e.g. AV lock)
+    private bool _loaded;
 
     public string Path => path;
 
@@ -223,6 +226,7 @@ public sealed partial class ConfigStore(string path)
                 {
                     _config = Normalize(JsonSerializer.Deserialize<AgentConfig>(File.ReadAllText(path), ReadOpts) ?? new());
                     _stamp = stamp;
+                    _loaded = true;
                 }
             }
             catch (Exception ex)
@@ -255,6 +259,7 @@ public sealed partial class ConfigStore(string path)
             File.Move(tmp, path, overwrite: true);
             _config = cfg;
             _stamp = File.GetLastWriteTimeUtc(path);
+            _loaded = true;
         }
         return null;
     }
@@ -407,6 +412,7 @@ public sealed partial class ConfigStore(string path)
     public void PersistGenerated()
     {
         var c = Get();
+        if (!_loaded && File.Exists(path)) return; // unreadable right now: keep the file as it is
         try
         {
             var onDisk = JsonSerializer.Deserialize<AgentConfig>(File.ReadAllText(path), ReadOpts);
