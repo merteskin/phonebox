@@ -57,6 +57,7 @@ class MainActivity : Activity(), SensorEventListener {
         super.onCreate(savedInstanceState)
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         link = AgentLink(this)
+        link.setUsbToken(intent?.getStringExtra("pb_token"))
         stream = AgentStream(link) { event, data ->
             val js = "window.onAgentStream && window.onAgentStream(${JSONObject.quote(event)}, ${JSONObject.quote(data)})"
             runOnUiThread { web.evaluateJavascript(js, null) }
@@ -129,6 +130,11 @@ class MainActivity : Activity(), SensorEventListener {
     override fun onBackPressed() {
         // Kiosk behaviour: Back does not leave the app, it returns to the first page.
         web.evaluateJavascript("window.onAndroidBack && window.onAndroidBack()", null)
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        link.setUsbToken(intent.getStringExtra("pb_token"))
     }
 
     override fun onResume() {

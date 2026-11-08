@@ -1,5 +1,5 @@
 {
-  // PhoneBox settings. Easiest to edit at http://127.0.0.1:8765.
+  // PhoneBox settings. Easiest to edit at http://127.0.0.1:8775.
   // Manual edits are picked up on the next request; no restart needed.
 
   // Only use the phone with this serial number (null = every connected Android device)

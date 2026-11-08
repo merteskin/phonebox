@@ -12,6 +12,7 @@ public sealed class AdbReverse(ConfigStore cfg, ILogger<AdbReverse> log) : Backg
     private const string HomeAlias = "net.oxog.phonebox.deskpanel/.HomeAlias";
     private readonly HashSet<string> _homeSet = [];
     private const string Rule = "tcp:8765";
+    private const string Target = "tcp:8767"; // UsbPort in Program.cs
 
     private string _lastState = "";
     private volatile string[] _devices = [];
@@ -41,7 +42,7 @@ public sealed class AdbReverse(ConfigStore cfg, ILogger<AdbReverse> log) : Backg
         foreach (var d in _devices)
         {
             await Adb(adb, $"-s {d} shell input keyevent KEYCODE_WAKEUP", CancellationToken.None);
-            await Adb(adb, $"-s {d} shell am start -n {PanelActivity}", CancellationToken.None);
+            await Adb(adb, $"-s {d} shell am start -n {PanelActivity} --es pb_token {cfg.Get().Lan.UsbToken}", CancellationToken.None);
         }
     }
 
@@ -72,11 +73,11 @@ public sealed class AdbReverse(ConfigStore cfg, ILogger<AdbReverse> log) : Backg
         foreach (var d in devices)
         {
             var list = await Adb(adb, $"-s {d} reverse --list", ct);
-            if (list.Contains(Rule)) continue;
-            await Adb(adb, $"-s {d} reverse {Rule} {Rule}", ct);
+            if (list.Contains(Rule) && list.Contains(Target)) continue;
+            await Adb(adb, $"-s {d} reverse {Rule} {Target}", ct);
             // Newly plugged in: wake the screen and open the panel.
             await Adb(adb, $"-s {d} shell input keyevent KEYCODE_WAKEUP", ct);
-            await Adb(adb, $"-s {d} shell am start -n {PanelActivity}", ct);
+            await Adb(adb, $"-s {d} shell am start -n {PanelActivity} --es pb_token {cfg.Get().Lan.UsbToken}", ct);
             log.LogInformation("{Device}: adb reverse set up, panel opened", d);
         }
         // Settings › Display › home screen: the app offers itself as a home app; make it the default one (no root needed).

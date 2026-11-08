@@ -87,12 +87,14 @@ public sealed class LanConfig
     public string? Token { get; set; }
     /// <summary>Separate key for the webhook API from other machines (push/notify/goto/refresh only). May appear in URLs.</summary>
     public string? WebhookToken { get; set; }
+    /// <summary>Key the phone must send over USB. Delivered only by adb (intent extra), never over HTTP.</summary>
+    public string? UsbToken { get; set; }
 }
 
 public sealed class UpdateConfig
 {
     /// <summary>Install new GitHub releases automatically (phone app over USB, agent in place).</summary>
-    public bool Auto { get; set; } = true;
+    public bool Auto { get; set; } = false; // unsigned zips: never auto-install code from GitHub
     public string Repo { get; set; } = "ersinkoc/phonebox";
 }
 
@@ -272,6 +274,7 @@ public sealed partial class ConfigStore(string path)
         c.Lan.Port = Math.Clamp(c.Lan.Port, 1024, 65535);
         if (string.IsNullOrWhiteSpace(c.Lan.Token)) c.Lan.Token = NewToken();
         if (string.IsNullOrWhiteSpace(c.Lan.WebhookToken)) c.Lan.WebhookToken = NewToken();
+        if (string.IsNullOrWhiteSpace(c.Lan.UsbToken)) c.Lan.UsbToken = NewToken();
         c.Night.Brightness = Math.Clamp(c.Night.Brightness, 0.01, 1);
 
         c.Pages = NormalizePages(c.Pages);
@@ -407,7 +410,7 @@ public sealed partial class ConfigStore(string path)
         try
         {
             var onDisk = JsonSerializer.Deserialize<AgentConfig>(File.ReadAllText(path), ReadOpts);
-            if (onDisk?.Lan?.Token == c.Lan.Token && onDisk?.Lan?.WebhookToken == c.Lan.WebhookToken) return;
+            if (onDisk?.Lan?.Token == c.Lan.Token && onDisk?.Lan?.WebhookToken == c.Lan.WebhookToken && onDisk?.Lan?.UsbToken == c.Lan.UsbToken) return;
         }
         catch { }
         Save(JsonSerializer.Serialize(c, WriteOpts));

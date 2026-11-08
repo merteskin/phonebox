@@ -64,6 +64,7 @@ class AgentLink(context: Context) {
 
     private fun usb(method: String, pathAndQuery: String, readTimeout: Int = 4000): Reply? = try {
         val c = URL("$USB_BASE$pathAndQuery").openConnection() as HttpURLConnection
+        usbAuth(c)
         c.connectTimeout = 400 // refused instantly when no adb reverse tunnel exists
         send(c, method, readTimeout)
     } catch (e: Exception) {
@@ -121,6 +122,7 @@ class AgentLink(context: Context) {
         background.execute {
             try {
                 val c = URL("$USB_BASE/api/pair").openConnection() as HttpURLConnection
+                usbAuth(c)
                 c.connectTimeout = 800
                 c.readTimeout = 3000
                 val j = JSONObject(c.inputStream.bufferedReader().readText())
@@ -140,6 +142,17 @@ class AgentLink(context: Context) {
             } catch (_: Exception) {
             }
         }
+    }
+
+    private val usbPrefs = context.getSharedPreferences("usb", Context.MODE_PRIVATE)
+
+    /** The agent hands its USB key over adb (intent extra); other apps on the device cannot read it. */
+    fun setUsbToken(token: String?) {
+        if (!token.isNullOrBlank()) usbPrefs.edit().putString("token", token).apply()
+    }
+
+    private fun usbAuth(c: HttpURLConnection) {
+        usbPrefs.getString("token", null)?.let { c.setRequestProperty("Authorization", "Bearer $it") }
     }
 
     fun pairedPc(): String? = if (prefs.getBoolean("enabled", false)) prefs.getString("pc", null) else null

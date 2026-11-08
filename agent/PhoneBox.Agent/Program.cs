@@ -2,7 +2,8 @@ using System.Net;
 using System.Text.Json;
 using PhoneBox.Agent;
 
-const int Port = 8765;
+const int Port = 8775; // 8765 is taken by another local app on this PC
+const int UsbPort = 8767; // the phone's 127.0.0.1:8765 is reversed here, never to the settings port
 string[] SameOrigins = [$"http://127.0.0.1:{Port}", $"http://localhost:{Port}"];
 
 // Install scripts ask where the agent belongs (it differs per OS), then copy it there.
@@ -36,6 +37,7 @@ var builder = WebApplication.CreateBuilder(new WebApplicationOptions
 builder.WebHost.ConfigureKestrel(k =>
 {
     k.Listen(IPAddress.Loopback, Port);
+    k.Listen(IPAddress.Loopback, UsbPort);
     // Wi-Fi / Tailscale: HTTPS with a pinned self-signed certificate, token required (see Lan.cs).
     if (lanCert is not null) k.Listen(IPAddress.Any, lanCfg.Port, l => l.UseHttps(lanCert));
 });
@@ -74,14 +76,25 @@ app.Use((ctx, next) =>
 });
 
 // Security:
-//  - Local port 8765 listens on 127.0.0.1 only; the Host check blocks DNS rebinding. The phone's USB proxy sends
+//  - Local port 8775 listens on 127.0.0.1 only; the Host check blocks DNS rebinding. The phone's USB proxy sends
 //    no Origin header; from browsers only the settings page itself (same origin) is accepted (no CSRF).
 //  - The optional Wi-Fi port only serves the phone API, only over TLS, and only with the paired token.
 app.UseRouting();
 app.Use(async (ctx, next) =>
 {
     var origin = ctx.Request.Headers.Origin.ToString();
-    if (lanCert is not null && ctx.Connection.LocalPort == lanCfg.Port)
+    if (ctx.Connection.LocalPort == UsbPort)
+    {
+        // Any app on the phone can reach the adb reverse tunnel, so the phone API needs the adb-delivered key here too.
+        var p = ctx.Request.Path;
+        if (origin != "" || !(Lan.AllowedOverLan(p) || p.StartsWithSegments("/api/pair"))
+            || !Lan.Matches(ctx.Request.Headers.Authorization, configStore.Get().Lan.UsbToken!))
+        {
+            ctx.Response.StatusCode = StatusCodes.Status403Forbidden;
+            return;
+        }
+    }
+    else if (lanCert is not null && ctx.Connection.LocalPort == lanCfg.Port)
     {
         // The phone's key opens the panel API; the separate webhook key opens only the webhook endpoints, in a header
         // or, for senders that cannot set headers, in ?token= (URLs end up in logs, so it must not be the phone's key).

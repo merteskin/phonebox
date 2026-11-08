@@ -118,4 +118,4 @@ if [ "$apk" = 1 ]; then
   "$adb" "${target[@]}" shell am start -n net.oxog.phonebox.deskpanel/.MainActivity >/dev/null
 fi
 
-echo "PhoneBox is running. Settings: http://127.0.0.1:8765"
+echo "PhoneBox is running. Settings: http://127.0.0.1:8775"
