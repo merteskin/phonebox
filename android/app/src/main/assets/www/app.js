@@ -1383,6 +1383,78 @@ W.push = {
   },
 };
 
+// ---------------------------------------------------------------- kripto: KriptoBot/OKX dashboard (push key "kripto")
+const kf = (x, d) => {
+  if (x == null || !Number.isFinite(+x)) return '—';
+  x = +x; const a = Math.abs(x);
+  const dd = d ?? (a >= 1000 ? 0 : a >= 1 ? 2 : a >= 0.01 ? 4 : 6);
+  return x.toLocaleString('en-US', { minimumFractionDigits: dd, maximumFractionDigits: dd });
+};
+const ks = (x, d = 2) => (x == null || !Number.isFinite(+x) ? '—' : (+x >= 0 ? '+' : '−') + kf(Math.abs(+x), d));
+const kcls = (x) => (x == null ? '' : +x > 0 ? 'up' : +x < 0 ? 'dn' : '');
+const ktime = (ts) => { if (!ts) return ''; const d = new Date(ts); return `${pad(d.getDate())}.${pad(d.getMonth() + 1)} ${pad(d.getHours())}:${pad(d.getMinutes())}`; };
+function kspark(arr, up) {
+  const s = h('span', 'kx-sp');
+  if (!arr || arr.length < 2) return s;
+  const mn = Math.min(...arr), mx = Math.max(...arr), r = mx - mn || 1, n = arr.length - 1;
+  const pts = arr.map((v, i) => `${(i / n * 100).toFixed(1)},${(27 - (v - mn) / r * 26).toFixed(1)}`).join(' ');
+  const col = up ? 'var(--ok)' : 'var(--err)';
+  s.innerHTML = `<svg viewBox="0 0 100 28" preserveAspectRatio="none"><polyline points="0,28 ${pts} 100,28" fill="${col}" fill-opacity=".08" stroke="none"/><polyline points="${pts}" fill="none" stroke="${col}" stroke-width="1.5" vector-effect="non-scaling-stroke"/></svg>`;
+  return s;
+}
+const kkpi = (label, val, cls, sub) => h('div', 'kx-kpi', h('div', 'kx-kl', label), h('div', 'kx-kv ' + (cls || ''), val), sub ? h('div', 'kx-ks', sub) : null);
+const ksec = (title, extra, rows) => h('div', 'kx-sec', h('div', 'kx-st', title, extra ? h('span', null, extra) : null),
+  rows.length ? rows : h('div', 'kx-none', 'Yok'));
+const klong = (t) => t === 'long' || t === 'AL' || t === 'buy';
+const krow = (l, m, v, cls, side) => h('div', 'kx-r', side ? h('i', 'kx-tag' + (klong(side) ? ' L' : ''), klong(side) ? 'L' : 'S') : h('i'),
+  h('span', 'kx-rl', l), h('span', 'kx-rm', m || ''), h('span', 'kx-rv ' + (cls || ''), v));
+
+W.kripto = {
+  bare: true, needs: ['push', 'tick'],
+  create(box, { o }) {
+    const key = o.key || 'kripto';
+    let lastAt = -1;
+    const render = () => {
+      const item = D.push[key];
+      if (!item) { if (lastAt !== 0) { lastAt = 0; box.replaceChildren(h('div', 'kx-wait', 'KriptoBot verisi bekleniyor…')); } return; }
+      const age = box.querySelector('.kx-age');
+      if (item.at === lastAt) { if (age) age.textContent = ago(item.at); return; }
+      lastAt = item.at;
+      const d = item.data || {}, k = d.kpi || {}, b = d.bot || {}, f = d.funding || {};
+      const fund = Object.entries(f).map(([c, r]) => `${c} ${r >= 0 ? '+' : ''}${(+r).toFixed(4)}%`).join('   ');
+      const head = h('div', 'kx-head',
+        kkpi('OKX equity', kf(k.equity, 2), 'big', k.avail != null ? `boşta ${kf(k.avail, 0)} USDT` : null),
+        kkpi('Canlı uPnL', ks(k.upnl), kcls(k.upnl), `bugün ${ks(k.d1)}`),
+        kkpi('Realized 7g', ks(k.d7), kcls(k.d7), `30g ${ks(k.d30)}`),
+        kkpi('Win rate 30g', k.win != null ? `${(+k.win).toFixed(0)}%` : '—', '', k.n ? `${k.n} işlem` : null),
+        kkpi('Kağıt bakiye', kf(k.paperBal, 0), '', `uPnL ${ks(k.paperUpnl)}`),
+        kkpi('BTC dominance', k.dom != null ? `${(+k.dom).toFixed(1)}%` : '—', '', null));
+      const coins = h('div', 'kx-coins', h('div', 'kx-cg kx-chd', h('span', null, 'Coin'), h('span', null, 'Fiyat'), h('span', null, '24s'), h('span', null, '24 saat')),
+        (d.coins || []).map((c) => h('div', 'kx-cg kx-c', h('b', null, c.s), h('span', 'kx-px', kf(c.px)),
+          h('span', 'kx-ch24 ' + kcls(c.ch), `${c.ch >= 0 ? '+' : '−'}${Math.abs(c.ch).toFixed(2)}%`), kspark(c.spark, c.ch >= 0))));
+      const pos = (d.pos || []).map((p) => krow(`${p.coin}${p.lev ? ' ' + kf(p.lev, 0) + 'x' : ''}`, `${kf(p.entry)} → ${kf(p.mark)}${p.liq ? ` · liq ${kf(p.liq)}` : ''}`,
+        ks(p.upnl), kcls(p.upnl), p.side));
+      const ord = (d.orders || []).map((x) => krow(`${x.coin} limit${x.lev ? ' ' + kf(x.lev, 0) + 'x' : ''}`, x.dist != null ? `fiyata ${x.dist >= 0 ? '+' : '−'}${Math.abs(x.dist).toFixed(1)}%` : '',
+        kf(x.px), 'info', x.dir));
+      const pap = (d.paper || []).map((p) => krow(p.coin, `${kf(p.entry)} → ${kf(p.mark)}   SL ${kf(p.stop)}`, `${ks(p.upnl)}  (${p.pct >= 0 ? '+' : '−'}${Math.abs(p.pct).toFixed(1)}%)`, kcls(p.upnl), p.side));
+      const cl = (d.closed || []).map((t) => krow(t.coin, `${t.src} · ${ktime(t.at)}`, ks(t.pnl), kcls(t.pnl), t.side));
+      const al = (d.alerts || []).map((a) => h('div', 'kx-al', h('span', 'kx-at', ktime(a.at)), h('b', null, a.coin), h('span', null, a.t)));
+      const right = h('div', 'kx-right',
+        ksec('OKX canlı', `${pos.length} pozisyon · ${ord.length} emir`, [...pos, ...ord]),
+        ksec('Kağıt pozisyonlar', `${pap.length} açık`, pap),
+        ksec('Son kapanışlar', null, cl),
+        ksec('KriptoBot uyarıları', null, al));
+      const ok = b.phase === 'running' && !b.paused && (b.hb ?? 99) < 180;
+      const foot = h('div', 'kx-foot',
+        h('span', 'kx-dot' + (ok ? ' on' : '')), h('span', null, `Bot ${ok ? 'çalışıyor' : (b.paused ? 'duraklatıldı' : b.phase || '?')} · OKX modu ${b.okx || '?'}`),
+        b.next ? h('span', null, `Sıradaki veri: ${b.next.name} · ${ktime(b.next.at)}`) : null,
+        h('span', 'kx-fund', fund ? `Funding   ${fund}` : ''), h('span', 'kx-age', ago(item.at)));
+      box.replaceChildren(h('div', 'kx', head, h('div', 'kx-body', coins, right), foot));
+    };
+    return { update: render };
+  },
+};
+
 W.inbox = {
   needs: ['notes', 'tick'],
   create(box) {

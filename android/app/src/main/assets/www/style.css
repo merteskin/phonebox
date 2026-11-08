@@ -659,3 +659,41 @@ body.offline .offline-msg { display: flex; }
 body.night #night { display: flex; }
 #nClock { font-size: 34vh; font-weight: 200; letter-spacing: -0.04em; line-height: 1; }
 #nDate { font-size: 16px; margin-top: 6px; text-transform: capitalize; }
+
+/* kripto dashboard */
+.w-kripto { background: linear-gradient(160deg, #0c1117 0%, #07090c 100%); border: 1px solid var(--line); border-radius: 18px; font-variant-numeric: tabular-nums; --kfs: clamp(10px, 1.32cqw, 17px); }
+.kx { height: 100%; display: grid; grid-template-rows: auto 1fr auto; font-size: var(--kfs); color: var(--text); }
+.kx-wait { height: 100%; display: grid; place-items: center; color: var(--muted); }
+.kx .up { color: var(--ok); } .kx .dn { color: var(--err); } .kx .info { color: #7cb4ff; }
+.kx-head { display: grid; grid-template-columns: 1.45fr repeat(5, 1fr); border-bottom: 1px solid var(--line); background: rgba(255,255,255,.015); }
+.kx-kpi { padding: 1em 1.3em .85em; border-right: 1px solid var(--line); min-width: 0; }
+.kx-kpi:last-child { border-right: 0; }
+.kx-kl { font-size: .7em; letter-spacing: .14em; text-transform: uppercase; color: var(--muted); font-weight: 600; white-space: nowrap; }
+.kx-kv { font-size: 1.85em; font-weight: 600; margin-top: .12em; white-space: nowrap; letter-spacing: -.01em; }
+.kx-kv.big { font-size: 2.45em; color: #fff; }
+.kx-ks { font-size: .8em; color: var(--dim); margin-top: .1em; white-space: nowrap; }
+.kx-body { display: grid; grid-template-columns: 1fr 1.3fr; min-height: 0; }
+.kx-coins { border-right: 1px solid var(--line); padding: .5em 1.2em .6em; display: flex; flex-direction: column; min-height: 0; }
+.kx-cg { display: grid; grid-template-columns: 4em 1fr 5.2em 7em; align-items: center; gap: 1em; }
+.kx-chd { font-size: .66em; letter-spacing: .14em; text-transform: uppercase; color: var(--dim); padding: .35em 0 .5em; }
+.kx-chd span:nth-child(2), .kx-chd span:nth-child(3) { text-align: right; } .kx-chd span:nth-child(4) { padding-left: .4em; }
+.kx-c { flex: 1; min-height: 0; border-top: 1px solid rgba(255,255,255,.045); }
+.kx-c b { font-weight: 600; letter-spacing: .02em; }
+.kx-px { text-align: right; } .kx-ch24 { text-align: right; font-weight: 600; }
+.kx-sp { display: block; height: 1.45em; } .kx-sp svg { width: 100%; height: 100%; display: block; }
+.kx-right { display: grid; grid-template-rows: .85fr .85fr 1.4fr 1.25fr; min-height: 0; }
+.kx-sec { padding: .55em 1.3em .4em; border-bottom: 1px solid var(--line); min-height: 0; overflow: hidden; display: flex; flex-direction: column; }
+.kx-sec:last-child { border-bottom: 0; }
+.kx-st { font-size: .68em; letter-spacing: .14em; text-transform: uppercase; color: #2dd4bf; font-weight: 700; display: flex; margin-bottom: .3em; white-space: nowrap; }
+.kx-st span { margin-left: auto; color: var(--dim); letter-spacing: .03em; text-transform: none; font-weight: 400; }
+.kx-r { display: grid; grid-template-columns: 1.35em 6.5em 1fr auto; gap: .75em; align-items: center; padding: .2em 0; white-space: nowrap; }
+.kx-tag { font-style: normal; font-size: .68em; font-weight: 700; text-align: center; border-radius: 4px; padding: .12em 0; background: rgba(239,68,68,.16); color: var(--err); }
+.kx-tag.L { background: rgba(34,197,94,.16); color: var(--ok); }
+.kx-rl { font-weight: 600; overflow: hidden; text-overflow: ellipsis; } .kx-rm { color: var(--muted); overflow: hidden; text-overflow: ellipsis; font-size: .9em; }
+.kx-rv { text-align: right; font-weight: 600; }
+.kx-none { color: var(--dim); font-size: .9em; }
+.kx-al { display: grid; grid-template-columns: 6.4em 3.8em 1fr; gap: .6em; padding: .2em 0; white-space: nowrap; overflow: hidden; }
+.kx-at { color: var(--dim); } .kx-al span:last-child { color: #f5c46b; overflow: hidden; text-overflow: ellipsis; }
+.kx-foot { display: flex; gap: 1.8em; align-items: center; padding: .6em 1.3em; border-top: 1px solid var(--line); font-size: .78em; color: var(--muted); white-space: nowrap; overflow: hidden; background: rgba(255,255,255,.015); }
+.kx-dot { width: .6em; height: .6em; border-radius: 50%; background: var(--err); flex: none; } .kx-dot.on { background: var(--ok); box-shadow: 0 0 8px var(--ok); }
+.kx-fund { margin-left: auto; } .kx-age { color: var(--dim); }
