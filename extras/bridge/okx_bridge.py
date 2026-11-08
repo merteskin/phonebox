@@ -115,7 +115,7 @@ def kriptobot():
         board = kripto_board(s)
         push("kripto", board)
         for c in board["coins"]:
-            if c["s"] in ("BTC", "ETH", "SOL"):
+            if c["s"] in ("BTC", "ETH", "TAO"):
                 push("px_" + c["s"].lower(), {"title": c["s"], "value": fmt(c["px"]), "sub": f'{c["ch"]:+.2f}% · 24s',
                                               "color": "#22c55e" if c["ch"] >= 0 else "#ef4444"})
         k = board["kpi"]

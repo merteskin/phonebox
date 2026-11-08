@@ -697,3 +697,17 @@ body.night #night { display: flex; }
 .kx-foot { display: flex; gap: 1.8em; align-items: center; padding: .6em 1.3em; border-top: 1px solid var(--line); font-size: .78em; color: var(--muted); white-space: nowrap; overflow: hidden; background: rgba(255,255,255,.015); }
 .kx-dot { width: .6em; height: .6em; border-radius: 50%; background: var(--err); flex: none; } .kx-dot.on { background: var(--ok); box-shadow: 0 0 8px var(--ok); }
 .kx-fund { margin-left: auto; } .kx-age { color: var(--dim); }
+
+/* premium clock */
+.w-clock { padding: clamp(10px, 5cqh, 22px) clamp(14px, 4cqw, 28px); border-radius: 18px; border: 1px solid var(--line);
+  background: radial-gradient(120% 140% at 0% 0%, rgba(45,212,191,.10) 0%, rgba(45,212,191,0) 55%), linear-gradient(160deg, #0d1218 0%, #07090c 100%); }
+.w-clock .clock { font-weight: 600; letter-spacing: -0.055em; font-variant-numeric: tabular-nums;
+  background: linear-gradient(180deg, #ffffff 0%, #b9c4d0 100%); -webkit-background-clip: text; background-clip: text; color: transparent; }
+.w-clock .clock .colon { color: #2dd4bf; -webkit-text-fill-color: #2dd4bf; opacity: .9; margin: 0 .02em; }
+.w-clock .clock .sec { -webkit-text-fill-color: #2dd4bf; color: #2dd4bf; font-weight: 600; font-size: .17em; letter-spacing: .02em;
+  border: 1px solid rgba(45,212,191,.35); background: rgba(45,212,191,.08); border-radius: 999px; padding: .15em .55em; margin: .7em 0 0 .5em; }
+.w-clock .date { text-transform: uppercase; letter-spacing: .22em; font-size: clamp(10px, 5.6cqh, 15px); color: var(--muted); font-weight: 600; margin-top: .4em; }
+.w-clock .wx { margin-top: clamp(6px, 5cqh, 16px); padding: .45em .9em; border-radius: 12px; background: rgba(255,255,255,.04); border: 1px solid var(--line); align-self: flex-start; }
+.w-clock .wx-temp { font-weight: 600; }
+.w-clock .status { margin-bottom: .5em; }
+.w-clock .clock { font-size: min(52cqh, 26cqw); }
