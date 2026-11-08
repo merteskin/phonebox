@@ -15,6 +15,7 @@ public sealed class AdbReverse(ConfigStore cfg, ILogger<AdbReverse> log) : Backg
     private const string Target = "tcp:8767"; // UsbPort in Program.cs
 
     private string _lastState = "";
+    private long _lastReconnect = long.MinValue / 2;
     private volatile string[] _devices = [];
     private volatile string[] _all = [];
 
@@ -58,10 +59,21 @@ public sealed class AdbReverse(ConfigStore cfg, ILogger<AdbReverse> log) : Backg
         }
 
         var serial = cfg.Get().DeviceSerial;
-        var devices = (await Adb(adb, "devices", ct))
+        var rows = (await Adb(adb, "devices", ct))
             .Split('\n').Skip(1)
             .Select(l => l.Trim().Split('\t'))
-            .Where(p => p.Length == 2 && p[1] == "device")
+            .Where(p => p.Length == 2)
+            .ToArray();
+        // A phone left plugged in while the PC reboots often comes back "offline" and stays so until the cable or
+        // USB debugging is toggled. "adb reconnect offline" restores it without touching the phone.
+        if (rows.Any(p => p[1] == "offline") && Environment.TickCount64 - _lastReconnect > 20_000)
+        {
+            _lastReconnect = Environment.TickCount64;
+            Report("phone offline, reconnecting adb...");
+            await Adb(adb, "reconnect offline", ct);
+        }
+        var devices = rows
+            .Where(p => p[1] == "device")
             .Select(p => p[0])
             .ToArray();
         _all = devices;
