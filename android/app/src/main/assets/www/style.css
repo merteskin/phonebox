@@ -711,3 +711,13 @@ body.night #night { display: flex; }
 .w-clock .wx-temp { font-weight: 600; }
 .w-clock .status { margin-bottom: .5em; }
 .w-clock .clock { font-size: min(52cqh, 26cqw); }
+
+/* wide centered clock */
+.w-clock { align-items: center; text-align: center; justify-content: center; }
+.w-clock .status { justify-content: center; margin-bottom: .2em; }
+.w-clock .clock { font-weight: 200; font-size: min(60cqh, 30cqw); letter-spacing: .02em; line-height: 1; margin: 0;
+  transform: scaleX(1.32); transform-origin: center; justify-content: center; position: relative; }
+.w-clock .clock .colon { font-weight: 200; margin: 0 .06em; }
+.w-clock .clock .sec { display: none; }
+.w-clock .date { margin-top: .55em; letter-spacing: .32em; }
+.w-clock .wx { align-self: center; margin-top: clamp(6px, 4cqh, 14px); }

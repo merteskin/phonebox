@@ -5,7 +5,7 @@
 // (adb reverse) or Wi-Fi to the computer.
 
 const API = '/agent/api';
-const LOCALE = 'en-GB';
+const LOCALE = 'tr-TR';
 const COLS = 12, ROWS = 6;
 const $ = (id) => document.getElementById(id);
 const bridge = typeof Android !== 'undefined' ? Android : null;
@@ -102,7 +102,7 @@ function shortDur(ms) {
   const hr = Math.floor(m / 60);
   return hr < 24 ? `${hr}h ${m % 60}m` : `${Math.floor(hr / 24)}d`;
 }
-const ago = (ts) => { const d = Date.now() - ts; return d < 45_000 ? 'just now' : shortDur(d) + ' ago'; };
+const ago = (ts) => { const d = Date.now() - ts; return d < 45_000 ? 'az önce' : shortDur(d) + ' önce'; };
 const r1 = (v) => (v == null ? '—' : (Math.round(v * 10) / 10).toString());
 const fmtMem = (mb) => (mb >= 1024 ? (mb / 1024).toFixed(1) + ' GB' : Math.round(mb) + ' MB');
 const cssVar = (name) => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
@@ -211,13 +211,13 @@ function metricText(m, s) {
 
 // ---------------------------------------------------------------- weather (Open-Meteo, straight from the phone)
 const WX = {
-  0: ['Clear', '☀️', '🌙'], 1: ['Mostly clear', '🌤️', '🌙'], 2: ['Partly cloudy', '⛅', '☁️'], 3: ['Overcast', '☁️', '☁️'],
-  45: ['Fog', '🌫️'], 48: ['Rime fog', '🌫️'],
-  51: ['Light drizzle', '🌦️'], 53: ['Drizzle', '🌦️'], 55: ['Heavy drizzle', '🌧️'], 56: ['Freezing drizzle', '🌧️'], 57: ['Freezing drizzle', '🌧️'],
-  61: ['Light rain', '🌦️'], 63: ['Rain', '🌧️'], 65: ['Heavy rain', '🌧️'], 66: ['Freezing rain', '🌧️'], 67: ['Freezing rain', '🌧️'],
-  71: ['Light snow', '🌨️'], 73: ['Snow', '🌨️'], 75: ['Heavy snow', '❄️'], 77: ['Snow grains', '🌨️'],
-  80: ['Light showers', '🌦️'], 81: ['Showers', '🌧️'], 82: ['Heavy showers', '⛈️'], 85: ['Snow showers', '🌨️'], 86: ['Heavy snow showers', '❄️'],
-  95: ['Thunderstorm', '⛈️'], 96: ['Thunderstorm, hail', '⛈️'], 99: ['Severe hail', '⛈️'],
+  0: ['Açık', '☀️', '🌙'], 1: ['Çoğunlukla açık', '🌤️', '🌙'], 2: ['Parçalı bulutlu', '⛅', '☁️'], 3: ['Kapalı', '☁️', '☁️'],
+  45: ['Sis', '🌫️'], 48: ['Kırağılı sis', '🌫️'],
+  51: ['Hafif çisenti', '🌦️'], 53: ['Çisenti', '🌦️'], 55: ['Yoğun çisenti', '🌧️'], 56: ['Donan çisenti', '🌧️'], 57: ['Donan çisenti', '🌧️'],
+  61: ['Hafif yağmur', '🌦️'], 63: ['Yağmur', '🌧️'], 65: ['Şiddetli yağmur', '🌧️'], 66: ['Donan yağmur', '🌧️'], 67: ['Donan yağmur', '🌧️'],
+  71: ['Hafif kar', '🌨️'], 73: ['Kar', '🌨️'], 75: ['Yoğun kar', '❄️'], 77: ['Kar taneleri', '🌨️'],
+  80: ['Hafif sağanak', '🌦️'], 81: ['Sağanak', '🌧️'], 82: ['Şiddetli sağanak', '⛈️'], 85: ['Kar sağanağı', '🌨️'], 86: ['Yoğun kar sağanağı', '❄️'],
+  95: ['Gök gürültülü fırtına', '⛈️'], 96: ['Fırtına, dolu', '⛈️'], 99: ['Şiddetli dolu', '⛈️'],
 };
 const wxIcon = (code, day = 1) => { const x = WX[code] || ['—', '🌡️']; return day === 0 && x[2] ? x[2] : x[1]; };
 
@@ -253,16 +253,16 @@ function wxLines() {
     icon: wxIcon(c.weather_code, c.is_day),
     temp: Math.round(c.temperature_2m) + '°',
     desc: `${desc} · ${cfg.weather?.city || ''}`,
-    range: (hi != null ? `↑${hi}° ↓${lo}° · ` : '') + `Feels like ${Math.round(c.apparent_temperature)}°`,
+    range: (hi != null ? `↑${hi}° ↓${lo}° · ` : '') + `Hissedilen ${Math.round(c.apparent_temperature)}°`,
   };
 }
 
 function wxBlock() {
   const e = h('div', 'wx', h('span', 'wx-icon', '·'), h('span', 'wx-temp', '--°'),
-    h('div', 'wx-meta', h('span', 'wx-desc', 'Loading weather…'), h('span', 'wx-range muted')));
+    h('div', 'wx-meta', h('span', 'wx-desc', 'Hava durumu yükleniyor…'), h('span', 'wx-range muted')));
   e.update = () => {
     const l = wxLines();
-    if (!l) { e.querySelector('.wx-desc').textContent = D.weather === null ? 'Loading weather…' : 'Weather unavailable'; return; }
+    if (!l) { e.querySelector('.wx-desc').textContent = D.weather === null ? 'Hava durumu yükleniyor…' : 'Hava durumu alınamadı'; return; }
     e.querySelector('.wx-icon').textContent = l.icon;
     e.querySelector('.wx-temp').textContent = l.temp;
     e.querySelector('.wx-desc').textContent = l.desc;
@@ -711,7 +711,7 @@ W.forecast = {
     return {
       update() {
         const w = D.weather;
-        if (!w?.hourly || !w?.daily) { row.replaceChildren(h('div', 'empty', D.weather === null ? 'Loading…' : 'Weather unavailable')); return; }
+        if (!w?.hourly || !w?.daily) { row.replaceChildren(h('div', 'empty', D.weather === null ? 'Loading…' : 'Hava durumu alınamadı')); return; }
         box.querySelector('.w-sub').textContent = cfg.weather?.city || '';
         const vertical = box.clientHeight > box.clientWidth * 0.9;
         const room = vertical ? box.clientHeight - 30 : box.clientWidth - 16;
@@ -721,7 +721,7 @@ W.forecast = {
         if (daily) {
           const d = w.daily;
           for (let i = 0; i < Math.min(n, d.time.length); i++) {
-            const day = i === 0 ? 'Today' : new Date(d.time[i] + 'T12:00').toLocaleDateString(LOCALE, { weekday: 'short' });
+            const day = i === 0 ? 'Bugün' : new Date(d.time[i] + 'T12:00').toLocaleDateString(LOCALE, { weekday: 'short' });
             const rain = d.precipitation_probability_max?.[i];
             cells.push(h('div', 'fc-i', h('span', 'fc-t', day), h('span', 'fc-ic', wxIcon(d.weather_code[i])),
               h('span', 'fc-v', Math.round(d.temperature_2m_max[i]) + '°', h('small', null, ' ' + Math.round(d.temperature_2m_min[i]) + '°')),
@@ -1154,7 +1154,7 @@ W.worldclock = {
           const zoneUtc = Date.UTC(+p.year, +p.month - 1, +p.day, +p.hour, +p.minute);
           const diffH = Math.round((zoneUtc - localUtc) / 360000) / 10;
           const dayDiff = Math.round((Date.UTC(+p.year, +p.month - 1, +p.day) - Date.UTC(now.getFullYear(), now.getMonth(), now.getDate())) / 86400000);
-          const day = dayDiff > 0 ? 'Tomorrow' : dayDiff < 0 ? 'Yesterday' : 'Today';
+          const day = dayDiff > 0 ? 'Yarın' : dayDiff < 0 ? 'Dün' : 'Bugün';
           it.s.textContent = diffH === 0 ? day : `${day}, ${diffH > 0 ? '+' : '−'}${Math.abs(diffH)}h`;
         }
       },
@@ -1903,7 +1903,7 @@ W.sun = {
     return {
       update() {
         const d = D.weather?.daily;
-        if (!d?.sunrise) { q('.sl').textContent = D.weather === null ? 'Loading…' : 'Weather unavailable'; return; }
+        if (!d?.sunrise) { q('.sl').textContent = D.weather === null ? 'Loading…' : 'Hava durumu alınamadı'; return; }
         const now = new Date();
         const key = now.getHours() + ':' + now.getMinutes();
         if (key === shown) return;
