@@ -154,7 +154,7 @@ function chart(canvas, series, opts = {}) {
     g.lineTo(x0, hh);
     g.closePath();
     const grad = g.createLinearGradient(0, 0, 0, hh);
-    grad.addColorStop(0, s.color + '55');
+    grad.addColorStop(0, s.color + 'aa');
     grad.addColorStop(1, s.color + '00');
     g.fillStyle = grad;
     g.fill();
@@ -351,6 +351,7 @@ const MEDIA_HTML = `
     <div class="art-wrap"><img class="art" alt=""><div class="art-ph">♪</div></div>
     <div class="m-text"><div class="m-app">Media</div><div class="m-title">Nothing playing</div><div class="m-artist">Start something on the PC</div></div>
   </div>
+  <div class="m-wave"><i style="--h:59%;--d:0.2s"></i><i style="--h:68%;--d:0.0s"></i><i style="--h:27%;--d:0.8s"></i><i style="--h:30%;--d:0.5s"></i><i style="--h:92%;--d:0.0s"></i><i style="--h:82%;--d:0.3s"></i><i style="--h:22%;--d:0.1s"></i><i style="--h:73%;--d:0.6s"></i><i style="--h:26%;--d:0.3s"></i><i style="--h:29%;--d:0.8s"></i><i style="--h:72%;--d:0.0s"></i><i style="--h:90%;--d:0.1s"></i><i style="--h:46%;--d:0.9s"></i><i style="--h:25%;--d:0.9s"></i><i style="--h:92%;--d:0.6s"></i><i style="--h:24%;--d:0.3s"></i><i style="--h:23%;--d:0.8s"></i><i style="--h:35%;--d:0.4s"></i><i style="--h:71%;--d:0.2s"></i><i style="--h:87%;--d:0.1s"></i><i style="--h:91%;--d:0.4s"></i><i style="--h:89%;--d:0.2s"></i><i style="--h:31%;--d:0.9s"></i><i style="--h:91%;--d:0.3s"></i><i style="--h:65%;--d:0.1s"></i><i style="--h:88%;--d:0.1s"></i><i style="--h:90%;--d:0.0s"></i><i style="--h:97%;--d:0.3s"></i><i style="--h:81%;--d:0.8s"></i><i style="--h:72%;--d:0.5s"></i><i style="--h:77%;--d:0.9s"></i><i style="--h:76%;--d:0.5s"></i><i style="--h:56%;--d:0.3s"></i><i style="--h:41%;--d:0.3s"></i><i style="--h:28%;--d:0.9s"></i><i style="--h:56%;--d:0.8s"></i><i style="--h:81%;--d:0.5s"></i><i style="--h:75%;--d:0.4s"></i><i style="--h:95%;--d:0.1s"></i><i style="--h:33%;--d:0.8s"></i><i style="--h:71%;--d:0.2s"></i><i style="--h:61%;--d:0.2s"></i><i style="--h:80%;--d:0.6s"></i><i style="--h:23%;--d:0.1s"></i><i style="--h:89%;--d:0.9s"></i><i style="--h:58%;--d:0.5s"></i><i style="--h:62%;--d:0.9s"></i><i style="--h:81%;--d:0.9s"></i><i style="--h:76%;--d:0.1s"></i><i style="--h:29%;--d:0.4s"></i><i style="--h:78%;--d:0.1s"></i><i style="--h:25%;--d:0.4s"></i><i style="--h:100%;--d:0.9s"></i><i style="--h:75%;--d:0.4s"></i><i style="--h:67%;--d:0.5s"></i><i style="--h:20%;--d:0.7s"></i></div>
   <div class="m-progress"><div class="bar"><div class="fill"></div></div><div class="times"><span class="m-pos">0:00</span><span class="m-dur">0:00</span></div></div>
   <div class="m-controls">
     <button class="ic" data-media="prev" aria-label="Previous"><svg viewBox="0 0 24 24"><path d="M6 5h2v14H6zM20 5v14L9.5 12z"/></svg></button>
@@ -565,6 +566,7 @@ function pushView(item) {
     v.unit = d.unit;
     v.color = d.color;
     v.icon = d.icon;
+    v.spark = d.spark;
     v.items = Array.isArray(d.items) ? d.items : undefined;
     v.level = d.level;
     if (typeof d.progress === 'number') v.progress = d.progress > 1 ? d.progress / 100 : d.progress;
@@ -675,7 +677,13 @@ W.clock = {
     const hh = h('span', 'hh', '--'), mm = h('span', 'mm', '--'), ss = h('span', 'sec');
     const date = o.date !== false ? h('div', 'date') : null;
     const wx = o.weather !== false ? wxBlock() : null;
-    box.append(status || '', h('div', 'clock', hh, h('span', 'colon', ':'), mm, ss), date || '', wx || '');
+    const split = o.layout === 'split';
+    const dDay = h('div', 'cd-day'), dMon = h('div', 'cd-mon'), dWd = h('div', 'cd-wd'), dNote = h('div', 'cd-note');
+    if (split) {
+      box.classList.add('clock-split');
+      box.append(status || '', h('div', 'cs-row', h('div', 'cs-date', dDay, dMon, dWd, dNote),
+        h('div', 'cs-main', h('div', 'clock', hh, h('span', 'colon', ':'), mm, ss), wx || '')));
+    } else box.append(status || '', h('div', 'clock', hh, h('span', 'colon', ':'), mm, ss), date || '', wx || '');
     box.style.setProperty('--tf', (0.84 - (status ? 0.1 : 0) - (date ? 0.11 : 0) - (wx ? 0.2 : 0)).toFixed(2));
     return {
       update(kind) {
@@ -685,6 +693,14 @@ W.clock = {
           mm.textContent = pad(now.getMinutes());
           ss.textContent = cfg.display?.showSeconds === false ? '' : pad(now.getSeconds());
           if (date) date.textContent = now.toLocaleDateString(LOCALE, { weekday: 'long', day: 'numeric', month: 'long' });
+          if (split) {
+            dDay.textContent = pad(now.getDate());
+            dMon.textContent = now.toLocaleDateString(LOCALE, { month: 'long' });
+            dWd.textContent = now.toLocaleDateString(LOCALE, { weekday: 'long' });
+            const bot = D.push.kripto?.data?.bot;
+            dNote.textContent = bot ? (bot.phase === 'running' && !bot.paused ? 'Bot aktif' : 'Bot durdu') : `Hafta ${Math.ceil(((now - new Date(now.getFullYear(), 0, 1)) / 864e5 + new Date(now.getFullYear(), 0, 1).getDay() + 1) / 7)}`;
+            dNote.classList.toggle('on', !!bot && bot.phase === 'running' && !bot.paused);
+          }
           if (status && now.getSeconds() % 30 === 0) renderStatus(status); // battery
         } else if (kind === 'weather') wx?.update();
         else if (status) renderStatus(status);
@@ -1373,6 +1389,14 @@ W.push = {
         body = h('div', 'push-big', h('div', 'pv', fmtValue(v.value), unit ? h('small', null, unit) : null),
           v.sub ? h('div', 'ps', String(v.sub)) : null,
           v.progress != null ? h('div', 'track', h('i')) : null);
+        if (Array.isArray(v.spark) && v.spark.length > 1) {
+          const a = v.spark.map(Number), mn = Math.min(...a), mx = Math.max(...a), r = mx - mn || 1, n = a.length - 1;
+          const pts = a.map((y, i) => `${(i / n * 100).toFixed(1)},${(30 - (y - mn) / r * 28).toFixed(1)}`).join(' ');
+          const sp = h('div', 'push-spark');
+          const col = c || 'var(--cpu)';
+          sp.innerHTML = `<svg viewBox="0 0 100 32" preserveAspectRatio="none"><polyline points="0,32 ${pts} 100,32" fill="${col}" fill-opacity=".14"/><polyline points="${pts}" fill="none" stroke="${col}" stroke-width="2" vector-effect="non-scaling-stroke"/></svg>`;
+          body.appendChild(sp);
+        }
         const bar = body.querySelector('.track i');
         if (bar) bar.style.width = Math.max(0, Math.min(100, v.progress * 100)) + '%';
       }
