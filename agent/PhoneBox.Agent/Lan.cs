@@ -20,8 +20,9 @@ public static class Lan
     {
         if (File.Exists(CertPath))
         {
-            try { return X509CertificateLoader.LoadPkcs12FromFile(CertPath, null, X509KeyStorageFlags.UserKeySet | X509KeyStorageFlags.Exportable); }
-            catch { /* corrupt: recreate below */ }
+            // A read error (file locked by antivirus, permissions) must not replace the certificate: a new one would
+            // break the phone's pinned pairing silently. Let the caller run without Wi-Fi this time instead.
+            return X509CertificateLoader.LoadPkcs12FromFile(CertPath, null, X509KeyStorageFlags.UserKeySet | X509KeyStorageFlags.Exportable);
         }
         using var key = ECDsa.Create(ECCurve.NamedCurves.nistP256);
         var req = new CertificateRequest($"CN=PhoneBox agent ({Environment.MachineName})", key, HashAlgorithmName.SHA256);
