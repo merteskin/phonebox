@@ -326,6 +326,7 @@ let media = null;          // last media state + the time it was received
 const WAVE_HISTORY = 40;
 let mediaWave = Array(WAVE_HISTORY).fill(0);
 let waveLevel = 0;
+let waveAverage = null;
 let volDragging = false;
 const DEFAULT_AMBIENT = '45, 212, 191';
 
@@ -352,10 +353,15 @@ const setAmbient = (rgb) => document.documentElement.style.setProperty('--ambien
 function updateWave(levels) {
   if (!levels.length) {
     waveLevel = 0;
+    waveAverage = null;
     mediaWave = Array(WAVE_HISTORY).fill(0);
   } else {
     const rms = Math.sqrt(levels.reduce((sum, value) => sum + value * value, 0) / levels.length) / 100;
-    waveLevel += (Math.min(1, rms) - waveLevel) * (rms > waveLevel ? .58 : .29);
+    // Emphasize short changes around the track's recent loudness, even on heavily compressed tracks.
+    waveAverage ??= rms;
+    waveAverage += (rms - waveAverage) * .06;
+    const target = Math.max(0, Math.min(1, rms * .64 + (rms - waveAverage) * 2.2));
+    waveLevel += (target - waveLevel) * (target > waveLevel ? .82 : .48);
     mediaWave = [...mediaWave.slice(1), waveLevel];
   }
   if (!nightOn) emit('wave');
@@ -802,6 +808,7 @@ W.media = {
       ink.addColorStop(1, 'rgba(255,255,255,.8)');
       g.strokeStyle = ink;
       g.lineWidth = 1.2;
+      g.lineJoin = 'round';
       if (!levels) {
         g.beginPath();
         g.moveTo(0, center);
@@ -813,9 +820,7 @@ W.media = {
       const edge = (side) => {
         const y = i => center + side * (1 + levels[i] * ht * .37);
         g.moveTo(0, y(0));
-        for (let i = 1; i < levels.length - 1; i++)
-          g.quadraticCurveTo(i * step, y(i), (i + .5) * step, (y(i) + y(i + 1)) / 2);
-        g.lineTo(w, y(levels.length - 1));
+        for (let i = 1; i < levels.length; i++) g.lineTo(i * step, y(i));
       };
       const glow = g.createLinearGradient(0, 0, w, 0);
       glow.addColorStop(0, 'transparent');
