@@ -900,6 +900,7 @@ function renderWebhooks(lan) {
   const local = `http://127.0.0.1:${location.port || 8775}`;
   const host = lan?.active && lan.hosts?.length ? `https://${lan.hosts[0]}:${lan.port}` : null;
   const token = cfg.lan?.webhookToken || '';
+  const webhookCurl = `curl -k --pinnedpubkey "${lan?.publicKeyPin}" -X POST ${host}/api/push/temperature`;
   const ex = [
     ['A number', `curl -X POST ${local}/api/push/temperature -d 21.5`],
     ['A status with a subtitle', `curl -X POST ${local}/api/push/build -H "Content-Type: application/json" -d "{\\"value\\":\\"passed\\",\\"sub\\":\\"main · 3m 12s\\"}"`],
@@ -912,13 +913,12 @@ function renderWebhooks(lan) {
   ];
   $('whExamples').replaceChildren(...ex.map(([t, c]) => h('div', { class: 'ex' }, h('span', {}, t), h('code', { class: 'cmdline', title: 'Click to copy', onclick: () => { navigator.clipboard?.writeText(c); toast('Copied'); } }, c))));
   $('whLan').replaceChildren(host
-    ? h('div', {}, h('p', { class: 'hint', style: { marginTop: 0 } }, 'From other machines on your network or Tailscale, with the webhook key (HTTPS with this PC\'s self-signed certificate, so curl needs -k). ' +
-        'The key can also go in ?token= for senders that cannot set headers. It only opens the webhook endpoints, never the phone API; replace it if it leaks.'),
+    ? h('div', {}, h('p', { class: 'hint', style: { marginTop: 0 } }, 'From another machine, use the Authorization header to send values and notifications. The curl example verifies this PC’s TLS public key.'),
       h('div', { class: 'row', style: { gap: '8px', margin: '0 0 8px' } }, h('code', {}, token ? token.slice(0, 6) + '…' : '(generated on save)'),
         h('button', { class: 'btn sm', disabled: !token, onclick: () => { navigator.clipboard?.writeText(token); toast('Webhook key copied'); } }, 'Copy key'),
         h('button', { class: 'btn sm', onclick: () => { cfg.lan = { ...(cfg.lan || {}), webhookToken: '' }; changed(); toast('A new webhook key is generated on save'); } }, 'New key')),
-      h('code', { class: 'cmdline', onclick: () => { navigator.clipboard?.writeText(`curl -k -X POST ${host}/api/push/temperature -H "Authorization: Bearer ${token}" -d 21.5`); toast('Copied'); } },
-        `curl -k -X POST ${host}/api/push/temperature -H "Authorization: Bearer ${token.slice(0, 6)}…" -d 21.5`))
+      h('code', { class: 'cmdline', onclick: () => { navigator.clipboard?.writeText(`${webhookCurl} -H "Authorization: Bearer ${token}" -d 21.5`); toast('Copied'); } },
+        `${webhookCurl} -H "Authorization: Bearer ${token.slice(0, 6)}…" -d 21.5`))
     : h('p', { class: 'hint', style: { margin: 0 } }, 'Turn on "Wi-Fi & Tailscale" in General to accept webhooks from other machines too. From this PC no token is needed.'));
 }
 

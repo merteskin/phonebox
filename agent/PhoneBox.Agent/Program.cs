@@ -104,12 +104,10 @@ app.Use(async (ctx, next) =>
     }
     else if (lanCert is not null && ctx.Connection.LocalPort == lanCfg.Port)
     {
-        // The phone's key opens the panel API; the separate webhook key opens only the webhook endpoints, in a header
-        // or, for senders that cannot set headers, in ?token= (URLs end up in logs, so it must not be the phone's key).
+        // The separate webhook key can submit values and notifications. Use headers to keep keys out of URLs.
         var lan = configStore.Get().Lan;
         var authorized = Lan.Matches(ctx.Request.Headers.Authorization, lan.Token!)
-            || (Lan.IsWebhook(ctx.Request.Path) && (Lan.Matches(ctx.Request.Headers.Authorization, lan.WebhookToken!)
-                || Lan.MatchesQuery(ctx.Request.Query["token"], lan.WebhookToken!)));
+            || (Lan.IsWebhookWrite(ctx.Request) && Lan.Matches(ctx.Request.Headers.Authorization, lan.WebhookToken!));
         if (origin != "" || !Lan.AllowedOverLan(ctx.Request.Path) || !authorized)
         {
             ctx.Response.StatusCode = StatusCodes.Status403Forbidden;
@@ -131,7 +129,9 @@ app.Use(async (ctx, next) =>
         UpdateService.AppVersion = appVersion.ToString();
     ctx.Response.Headers.CacheControl = "no-store";
     // only the panel may be framed, and only by the settings page itself (the live preview)
-    ctx.Response.Headers["X-Frame-Options"] = ctx.Request.Path.StartsWithSegments("/panel") ? "SAMEORIGIN" : "DENY";
+    var panel = ctx.Request.Path.StartsWithSegments("/panel");
+    ctx.Response.Headers["X-Frame-Options"] = panel ? "SAMEORIGIN" : "DENY";
+    if (panel) ctx.Response.Headers["Content-Security-Policy"] = "frame-ancestors 'self'";
     await next();
 });
 
@@ -161,6 +161,7 @@ app.MapGet("/api/lan", (ConfigStore cfg) => Results.Json(new
     restartNeeded = cfg.Get().Lan.Enabled != (lanCert is not null) || (lanCert is not null && cfg.Get().Lan.Port != lanCfg.Port),
     hosts = Lan.Addresses(),
     fingerprint = lanCert is null ? null : Lan.Fingerprint(lanCert),
+    publicKeyPin = lanCert is null ? null : Lan.PublicKeyPin(lanCert),
 }));
 
 app.MapGet("/api/update", (UpdateService upd, ConfigStore cfg) => Results.Json(new { status = upd.Status(), auto = cfg.Get().Updates.Auto, installed = UpdateService.RunningInstalled }));

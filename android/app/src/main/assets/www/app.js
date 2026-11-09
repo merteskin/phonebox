@@ -1477,7 +1477,7 @@ W.push = {
       lastAt = item.at;
       const v = pushView(item);
       const lvl = levelOf(v);
-      const c = v.color || LEVEL_COLOR[lvl] || '';
+      const c = typeof v.color === 'string' && CSS.supports('color', v.color) ? v.color : LEVEL_COLOR[lvl] || '';
       if (c) box.style.setProperty('--c', c); else box.style.removeProperty('--c');
       const unit = v.unit ?? o.unit ?? '';
       const style = o.style && o.style !== 'auto' ? o.style : v.items ? 'list' : 'big';
@@ -1507,12 +1507,29 @@ W.push = {
         body = h('div', 'push-big', h('div', 'pv', fmtValue(v.value), unit ? h('small', null, unit) : null),
           v.sub ? h('div', 'ps', String(v.sub)) : null,
           v.progress != null ? h('div', 'track', h('i')) : null);
-        if (Array.isArray(v.spark) && v.spark.length > 1) {
-          const a = v.spark.map(Number), mn = Math.min(...a), mx = Math.max(...a), r = mx - mn || 1, n = a.length - 1;
+        const a = Array.isArray(v.spark) ? v.spark.slice(-240)
+          .filter(x => typeof x === 'number' || typeof x === 'string').map(Number).filter(Number.isFinite) : [];
+        if (a.length > 1) {
+          const mn = Math.min(...a), mx = Math.max(...a), r = mx - mn || 1, n = a.length - 1;
           const pts = a.map((y, i) => `${(i / n * 100).toFixed(1)},${(30 - (y - mn) / r * 28).toFixed(1)}`).join(' ');
           const sp = h('div', 'push-spark');
           const col = c || 'var(--cpu)';
-          sp.innerHTML = `<svg viewBox="0 0 100 32" preserveAspectRatio="none"><polyline points="0,32 ${pts} 100,32" fill="${col}" fill-opacity=".14"/><polyline points="${pts}" fill="none" stroke="${col}" stroke-width="2" vector-effect="non-scaling-stroke"/></svg>`;
+          const ns = 'http://www.w3.org/2000/svg';
+          const svg = document.createElementNS(ns, 'svg');
+          svg.setAttribute('viewBox', '0 0 100 32');
+          svg.setAttribute('preserveAspectRatio', 'none');
+          const fill = document.createElementNS(ns, 'polyline');
+          fill.setAttribute('points', '0,32 ' + pts + ' 100,32');
+          fill.setAttribute('fill', col);
+          fill.setAttribute('fill-opacity', '.14');
+          const line = document.createElementNS(ns, 'polyline');
+          line.setAttribute('points', pts);
+          line.setAttribute('fill', 'none');
+          line.setAttribute('stroke', col);
+          line.setAttribute('stroke-width', '2');
+          line.setAttribute('vector-effect', 'non-scaling-stroke');
+          svg.append(fill, line);
+          sp.append(svg);
           body.appendChild(sp);
         }
         const bar = body.querySelector('.track i');

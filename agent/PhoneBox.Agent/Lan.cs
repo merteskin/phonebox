@@ -38,6 +38,9 @@ public static class Lan
 
     public static string Fingerprint(X509Certificate2 cert) => Convert.ToHexString(SHA256.HashData(cert.RawData)).ToLowerInvariant();
 
+    public static string PublicKeyPin(X509Certificate2 cert) =>
+        "sha256//" + Convert.ToBase64String(SHA256.HashData(cert.PublicKey.ExportSubjectPublicKeyInfo()));
+
     /// <summary>Addresses the phone can try: private LAN IPv4 addresses first, then Tailscale (100.64.0.0/10).</summary>
     public static IReadOnlyList<string> Addresses()
     {
@@ -70,9 +73,14 @@ public static class Lan
         return CryptographicOperations.FixedTimeEquals(given, expected);
     }
 
-    public static bool MatchesQuery(string? given, string token) =>
-        !string.IsNullOrEmpty(given) && CryptographicOperations.FixedTimeEquals(
-            System.Text.Encoding.UTF8.GetBytes(given), System.Text.Encoding.UTF8.GetBytes(token));
+    public static bool IsWebhookWrite(HttpRequest req)
+    {
+        if (HttpMethods.IsPost(req.Method) && string.Equals(req.Path.Value, "/api/notify", StringComparison.OrdinalIgnoreCase))
+            return true;
+        return (HttpMethods.IsPost(req.Method) || HttpMethods.IsPut(req.Method))
+            && req.Path.StartsWithSegments("/api/push", out var rest)
+            && rest.Value is { Length: > 1 } key && !key.AsSpan(1).Contains('/');
+    }
 
     /// <summary>Endpoints the phone may use over Wi-Fi. Settings, tests and pairing stay local-only.</summary>
     public static bool AllowedOverLan(PathString path) =>
@@ -81,8 +89,7 @@ public static class Lan
         || path.StartsWithSegments("/api/work") || path.StartsWithSegments("/api/procs") || path.StartsWithSegments("/api/run")
         || path.StartsWithSegments("/api/widget") || path.StartsWithSegments("/api/approvals") || path.StartsWithSegments("/api/stream") || IsWebhook(path);
 
-    /// <summary>The webhook API: other machines on the network (or Tailscale) may push data with the same token.</summary>
-    public static bool IsWebhook(PathString path) =>
+    private static bool IsWebhook(PathString path) =>
         path.StartsWithSegments("/api/push") || path.StartsWithSegments("/api/notify")
         || path.StartsWithSegments("/api/goto") || path.StartsWithSegments("/api/refresh");
 
