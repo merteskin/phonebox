@@ -256,8 +256,8 @@ body.offline .offline-msg { display: flex; }
 .w-gauge, .w-pomodoro { display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 6px; gap: 1px; }
 .g-dial { position: relative; height: min(66cqh, 88cqw); aspect-ratio: 1; flex: 0 0 auto; }
 .g-dial svg { width: 100%; height: 100%; transform: rotate(-90deg); overflow: visible; }
-.g-dial .bg, .q-dial .bg { fill: none; stroke: rgba(255, 255, 255, .08); stroke-width: 9; }
-.g-dial .fg, .q-dial .fg { fill: none; stroke: var(--qc, var(--q)); stroke-width: 9; stroke-linecap: round; transition: stroke-dashoffset .8s ease; filter: drop-shadow(0 0 6px color-mix(in srgb, var(--qc, var(--q)) 50%, transparent)); }
+.g-dial .bg { fill: none; stroke: rgba(255, 255, 255, .08); stroke-width: 9; }
+.g-dial .fg { fill: none; stroke: var(--qc, var(--q)); stroke-width: 9; stroke-linecap: round; transition: stroke-dashoffset .8s ease; filter: drop-shadow(0 0 6px color-mix(in srgb, var(--qc, var(--q)) 50%, transparent)); }
 .g-val { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; font-size: min(15cqh, 22cqw); font-weight: 500; letter-spacing: -0.02em; white-space: nowrap; }
 .g-val small { font-size: .5em; color: var(--muted); margin-left: 1px; }
 .g-label { font-size: clamp(9px, 6cqh, 13px); letter-spacing: .12em; font-weight: 700; color: var(--q, var(--text)); white-space: nowrap; }
@@ -289,31 +289,27 @@ body.offline .offline-msg { display: flex; }
 .w-quotas { background: none; border: 0; }
 .q-grid { height: 100%; display: flex; gap: 10px; }
 .q-card {
-  position: relative; display: flex; flex-direction: column; padding: 10px 14px; min-width: 0; overflow: hidden;
+  flex: 1; display: flex; flex-direction: column; padding: clamp(12px, 3cqh, 24px); min-width: 0; min-height: 0; overflow: hidden;
   border: 1px solid var(--line); border-radius: 18px;
   background: radial-gradient(90% 70% at 50% 0%, color-mix(in srgb, var(--q) 13%, transparent), transparent 70%), var(--card);
 }
-.q-head { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
-.q-logo { font-size: 17px; color: var(--q); line-height: 1; align-self: center; }
-.q-name { font-size: 15px; font-weight: 700; }
+.q-head { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.q-logo { font-size: clamp(15px, 5cqh, 26px); color: var(--q); line-height: 1; }
+.q-name { font-size: clamp(16px, 5cqh, 27px); font-weight: 700; }
 .q-plan { font-size: 11px; color: var(--q); background: color-mix(in srgb, var(--q) 15%, transparent); padding: 2px 8px; border-radius: 7px; font-weight: 600; white-space: nowrap; }
-.q-upd { margin-left: auto; font-size: 11px; color: var(--dim); white-space: nowrap; }
-.q-rings { flex: 1; display: flex; justify-content: space-around; align-items: center; gap: 8px; min-height: 0; }
-.q-ring { display: flex; flex-direction: column; align-items: center; min-width: 0; flex: 1; }
-.q-dial { position: relative; width: min(50cqh, 170px); max-width: 100%; aspect-ratio: 1; }
-.q-dial svg { width: 100%; height: 100%; transform: rotate(-90deg); overflow: visible; }
-.q-dial .pace { stroke: rgba(255, 255, 255, .85); stroke-width: 2.5; stroke-linecap: round; }
-.q-pct { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; font-size: min(10cqh, 28px); font-weight: 500; letter-spacing: -0.02em; }
-.q-pct small { font-size: .45em; color: var(--muted); margin-left: 1px; }
-.q-label { font-size: 12px; font-weight: 600; margin-top: 5px; text-align: center; white-space: nowrap; }
-.q-reset { font-size: 11px; color: var(--muted); text-align: center; white-space: nowrap; }
-.q-pace { font-size: 11px; margin-top: 2px; text-align: center; white-space: nowrap; color: var(--muted); }
-.q-pace.fast { color: #fbbf24; }
-.q-pace.over { color: #f87171; }
-.q-pace.calm { color: #86efac; }
-.q-foot { font-size: 11.5px; color: var(--muted); display: flex; justify-content: space-between; gap: 10px; }
-.q-foot .q-err { color: #fca5a5; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-@container (max-height: 200px) { .q-reset, .q-pace, .q-foot { display: none; } .q-dial { width: min(58cqh, 124px); } }
+.q-upd { margin-top: 5px; font-size: clamp(11px, 3cqh, 15px); color: var(--muted); }
+.q-rows { display: grid; align-content: start; gap: clamp(8px, 3cqh, 18px); min-height: 0; overflow: auto; margin-top: clamp(9px, 4cqh, 24px); }
+.q-row, .q-message {
+  padding: clamp(8px, 3cqh, 18px); border-radius: 12px; border: 1px solid var(--line);
+  background: rgba(255, 255, 255, .025);
+}
+.q-row-head, .q-row-meta { display: flex; justify-content: space-between; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; }
+.q-label { font-size: clamp(12px, 4cqh, 20px); font-weight: 600; }
+.q-left { font-size: clamp(16px, 5cqh, 26px); font-variant-numeric: tabular-nums; }
+.q-track { height: clamp(5px, 2cqh, 10px); margin: clamp(6px, 2cqh, 12px) 0; border-radius: 99px; background: rgba(255, 255, 255, .09); overflow: hidden; }
+.q-fill { height: 100%; border-radius: inherit; background: var(--qc, var(--q)); }
+.q-row-meta, .q-reset, .q-message { font-size: clamp(11px, 3cqh, 15px); color: var(--muted); }
+.q-reset { margin-top: 6px; }
 @container (max-width: 420px) { .q-grid { flex-direction: column; } }
 
 /* ---------- sessions & GitHub ---------- */

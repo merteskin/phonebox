@@ -396,11 +396,10 @@ const MEDIA_HTML = `
 const Q_STYLE = { claude: { color: '#d97757', logo: '✳' }, codex: { color: '#e5e7eb', logo: '◎' } };
 
 function fmtReset(ts) {
-  if (!ts) return '';
-  const d = new Date(ts);
-  const hm = d.toLocaleTimeString(LOCALE, { hour: '2-digit', minute: '2-digit' });
-  const day = d.toDateString() === new Date().toDateString() ? hm : d.toLocaleDateString(LOCALE, { weekday: 'short' }) + ' ' + hm;
-  return `${day} · in ${fmtDur(ts - Date.now())}`;
+  if (!ts) return 'Sıfırlanma saati bilinmiyor';
+  return 'Sıfırlanma · ' + new Date(ts).toLocaleString(LOCALE, {
+    day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit',
+  });
 }
 
 /** Compares the share of the quota used with the share of the window elapsed. */
@@ -1063,36 +1062,54 @@ W.quotas = {
   needs: ['quotas', 'tick'],
   create(box, { o }) {
     const want = Array.isArray(o.providers) ? o.providers : ['claude', 'codex'];
-    const grid = h('div', 'q-grid', h('div', 'empty', 'Quota data arrives once the computer is connected.'));
+    const grid = h('div', 'q-grid', h('div', 'empty', 'Kota verisi bekleniyor…'));
     box.append(grid);
     let last = 0;
     const render = () => {
       if (!D.quotas) return;
-      const list = quotaProviders().filter((p) => want.includes(p.id));
       grid.replaceChildren();
-      if (!list.length) { grid.appendChild(h('div', 'empty', 'No quota providers enabled')); return; }
-      for (const p of list) {
-        const st = Q_STYLE[p.id] || { color: '#94a3b8', logo: '●' };
+      const now = Date.now();
+      for (const id of want) {
+        const p = quotaProviders().find(item => item.id === id);
+        const st = Q_STYLE[id] || { color: '#94a3b8', logo: '●' };
+        const name = p?.name || (id === 'claude' ? 'Claude' : id === 'codex' ? 'Codex' : id);
         const card = h('div', 'q-card');
         card.style.setProperty('--q', st.color);
-        card.style.flex = String(Math.max(1, p.limits.length) + 0.3);
-        card.appendChild(h('div', 'q-head', h('span', 'q-logo', st.logo), h('span', 'q-name', p.name), h('span', 'q-plan', p.plan),
-          p.updatedAt ? h('span', 'q-upd', fmtDur(Date.now() - p.updatedAt) + ' ago') : null));
-        const rings = h('div', 'q-rings');
-        for (const l of p.limits) {
-          const pace = paceInfo(l);
-          const dial = h('div', 'q-dial');
-          if (l.percent >= 95 || l.severity === 'critical') dial.style.setProperty('--qc', '#ef4444');
-          else if (l.percent >= 80 || l.severity === 'warning') dial.style.setProperty('--qc', '#f59e0b');
-          dial.innerHTML = ringSvg(l.percent, pace?.elapsed); // numbers only
-          dial.appendChild(h('div', 'q-pct', String(Math.round(l.percent)), h('small', null, '%')));
-          rings.appendChild(h('div', 'q-ring', dial, h('div', 'q-label', l.label), h('div', 'q-reset', fmtReset(l.resetsAt)),
-            pace ? h('div', 'q-pace ' + pace.cls, pace.text) : null));
+        const source = p?.source === 'session' ? 'Oturum kaydı'
+          : p?.error || !p?.updatedAt ? 'Veri bekleniyor' : now - p.updatedAt > 300_000 ? 'Son ölçüm' : 'Canlı veri';
+        card.append(h('div', 'q-head', h('span', 'q-logo', st.logo), h('span', 'q-name', name),
+          p?.plan && p.plan !== name ? h('span', 'q-plan', p.plan) : null),
+          h('div', 'q-upd', source + (p?.updatedAt ? ' · ' + new Date(p.updatedAt).toLocaleTimeString(LOCALE, { hour: '2-digit', minute: '2-digit' }) : '')));
+        const rows = h('div', 'q-rows');
+        for (const l of p?.limits || []) {
+          const label = l.label.replace(/^5-hour(?: session)?$/, '5 saatlik').replace(/^Weekly/, 'Haftalık');
+          const row = h('div', 'q-row');
+          if (!Number.isFinite(l.percent) || (l.resetsAt && l.resetsAt <= now)) {
+            row.append(h('div', 'q-label', label), h('div', 'q-reset', 'Yeni dönem verisi bekleniyor'));
+          } else {
+            const used = Math.round(Math.max(0, Math.min(100, l.percent)));
+            const remaining = 100 - used;
+            const fill = h('div', 'q-fill');
+            fill.style.width = remaining + '%';
+            if (remaining <= 5) fill.style.setProperty('--qc', '#f87171');
+            else if (remaining <= 20) fill.style.setProperty('--qc', '#fbbf24');
+            const bar = h('div', 'q-track', fill);
+            bar.setAttribute('role', 'progressbar');
+            bar.setAttribute('aria-label', label + ' kalan kota');
+            bar.setAttribute('aria-valuenow', String(remaining));
+            row.append(h('div', 'q-row-head', h('div', 'q-label', label), h('strong', 'q-left', '%' + remaining + ' kaldı')),
+              bar, h('div', 'q-row-meta', h('span', null, '%' + used + ' kullanıldı'), h('span', null, fmtReset(l.resetsAt))));
+          }
+          rows.append(row);
         }
-        if (!p.limits.length) rings.appendChild(h('div', 'q-reset', 'No data'));
-        card.append(rings, h('div', 'q-foot', h('span', null, p.extra || ''), p.error ? h('span', 'q-err', p.error) : h('span')));
-        grid.appendChild(card);
+        const login = p?.error?.includes('Token expired') || p?.error?.includes('signed in') || p?.error?.includes('HTTP 401');
+        const message = login ? 'Claude Code’da /usage aç veya /login ile oturumu yenile.'
+          : p?.error ? 'Kota verisi şu anda alınamıyor.' : 'Kota verisi bekleniyor.';
+        if (!rows.childElementCount || p?.error) rows.append(h('div', 'q-message', message));
+        card.append(rows);
+        grid.append(card);
       }
+      if (!want.length) grid.append(h('div', 'empty', 'Kota sağlayıcısı seçilmedi.'));
     };
     return {
       update(kind) {
