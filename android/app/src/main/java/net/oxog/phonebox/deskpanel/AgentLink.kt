@@ -1,6 +1,7 @@
 package net.oxog.phonebox.deskpanel
 
 import android.content.Context
+import android.os.SystemClock
 import org.json.JSONObject
 import java.io.ByteArrayInputStream
 import java.io.InputStream
@@ -36,13 +37,17 @@ class AgentLink(context: Context) {
     private val prefs = context.getSharedPreferences("pairing", Context.MODE_PRIVATE)
     private val appVersion = context.packageManager.getPackageInfo(context.packageName, 0).versionName ?: ""
     private val background = Executors.newSingleThreadExecutor()
-    @Volatile private var lastPair = 0L
+    private var nextPair = 0L
     @Volatile private var preferredHost = 0
     @Volatile private var factory: Pair<String, SSLSocketFactory>? = null
 
     /** Opens a long-lived GET (the live stream) over the best route; null when the PC is unreachable. */
     fun stream(path: String): Pair<Route, Reply>? {
-        usb("GET", path, STREAM_READ_TIMEOUT)?.let { route = Route.USB; return Route.USB to it }
+        usb("GET", path, STREAM_READ_TIMEOUT)?.let {
+            route = Route.USB
+            if (it.code == 200) maybePair()
+            return Route.USB to it
+        }
         wifi("GET", path, STREAM_READ_TIMEOUT)?.let { route = Route.WIFI; return Route.WIFI to it }
         return null
     }
@@ -116,17 +121,19 @@ class AgentLink(context: Context) {
     }
 
     /** While on USB, refresh the Wi-Fi pairing data about once a minute. */
+    @Synchronized
     private fun maybePair() {
-        val now = System.currentTimeMillis()
-        if (now - lastPair < 60_000) return
-        lastPair = now
+        val now = SystemClock.elapsedRealtime()
+        if (now < nextPair) return
+        nextPair = now + 60_000
         background.execute {
             try {
                 val c = URL("$USB_BASE/api/pair").openConnection() as HttpURLConnection
                 usbAuth(c)
                 c.connectTimeout = 800
                 c.readTimeout = 3000
-                val j = JSONObject(c.inputStream.bufferedReader().readText())
+                val j = try { JSONObject(c.inputStream.bufferedReader().use { it.readText() }) }
+                finally { c.disconnect() }
                 val e = prefs.edit()
                 if (j.optBoolean("enabled")) {
                     val hosts = j.getJSONArray("hosts")
@@ -141,6 +148,7 @@ class AgentLink(context: Context) {
                 }
                 e.apply()
             } catch (_: Exception) {
+                synchronized(this) { nextPair = SystemClock.elapsedRealtime() + 5_000 }
             }
         }
     }

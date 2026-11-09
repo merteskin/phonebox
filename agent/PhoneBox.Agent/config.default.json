@@ -8,7 +8,7 @@
   "adbPath": null,
 
   // Weather location (Open-Meteo, no API key required)
-  "weather": { "city": "Tallinn", "lat": 59.437, "lon": 24.745 },
+  "weather": { "city": "İstanbul", "lat": 41.0082, "lon": 28.9784 },
 
   // Night mode: between these times the screen dims and only the clock stays. Tap to wake it for 30 s.
   "night": { "enabled": true, "start": "00:30", "end": "07:30", "brightness": 0.02 },
@@ -22,7 +22,8 @@
   // music, clock, focus, world, dashboard, devops, feeds, ambient, markets, daily, status, calm) and is replaced by
   // its widgets on the first save.
   "pages": [
-    { "template": "home" },
+    { "id": "home", "template": "home-kripto" },
+    { "template": "kripto" },
     { "template": "ai" },
     { "template": "work" },
     { "template": "system" },

@@ -3,14 +3,15 @@ using System.Diagnostics;
 namespace PhoneBox.Agent;
 
 /// <summary>
-/// While a phone is connected over USB, keeps an "adb reverse tcp:8765 tcp:8765" rule in place so that
-/// 127.0.0.1:8765 on the phone reaches this agent. When a phone is newly plugged in, wakes it and opens the panel.
+/// Keeps the ADB reverse tunnel in place so that 127.0.0.1:8765 on the phone reaches this agent.
+/// Opens the panel when a device connects or the agent starts.
 /// </summary>
 public sealed class AdbReverse(ConfigStore cfg, ILogger<AdbReverse> log) : BackgroundService
 {
     public const string PanelActivity = "net.oxog.phonebox.deskpanel/.MainActivity";
     private const string HomeAlias = "net.oxog.phonebox.deskpanel/.HomeAlias";
     private readonly HashSet<string> _homeSet = [];
+    private readonly HashSet<string> _opened = [];
     private const string Rule = "tcp:8765";
     private const string Target = "tcp:8767"; // UsbPort in Program.cs
 
@@ -53,6 +54,7 @@ public sealed class AdbReverse(ConfigStore cfg, ILogger<AdbReverse> log) : Backg
         if (adb is null)
         {
             SetDevices([]);
+            _opened.Clear();
             Report("adb not found: " + (OperatingSystem.IsWindows() ? "run 'winget install Google.PlatformTools'"
                 : OperatingSystem.IsMacOS() ? "run 'brew install android-platform-tools'" : "run 'sudo apt install adb' (or your distribution's package)") + " or set adbPath in the settings");
             return;
@@ -66,7 +68,8 @@ public sealed class AdbReverse(ConfigStore cfg, ILogger<AdbReverse> log) : Backg
             .ToArray();
         // A phone left plugged in while the PC reboots often comes back "offline" and stays so until the cable or
         // USB debugging is toggled. "adb reconnect offline" restores it without touching the phone.
-        if (rows.Any(p => p[1] == "offline") && Environment.TickCount64 - _lastReconnect > 20_000)
+        if (rows.Any(p => p[1] == "offline" && (string.IsNullOrEmpty(serial) || p[0] == serial))
+            && Environment.TickCount64 - _lastReconnect > 20_000)
         {
             _lastReconnect = Environment.TickCount64;
             Report("phone offline, reconnecting adb...");
@@ -80,17 +83,21 @@ public sealed class AdbReverse(ConfigStore cfg, ILogger<AdbReverse> log) : Backg
         devices = devices.Where(s => string.IsNullOrEmpty(serial) || s == serial).ToArray();
 
         SetDevices(devices);
+        _opened.IntersectWith(devices);
         if (devices.Length == 0) { Report("no phone connected, waiting..."); return; }
 
         foreach (var d in devices)
         {
             var list = await Adb(adb, $"-s {d} reverse --list", ct);
-            if (list.Contains(Rule) && list.Contains(Target)) continue;
+            var hasTunnel = list.Split('\n').Any(line => line.TrimEnd().EndsWith($" {Rule} {Target}", StringComparison.Ordinal));
+            if (hasTunnel && _opened.Contains(d)) continue;
+            // The rule can survive an agent restart even when the old tunnel no longer forwards traffic.
+            if (hasTunnel) await Adb(adb, $"-s {d} reverse --remove {Rule}", ct);
             await Adb(adb, $"-s {d} reverse {Rule} {Target}", ct);
-            // Newly plugged in: wake the screen and open the panel.
             await Adb(adb, $"-s {d} shell input keyevent KEYCODE_WAKEUP", ct);
             await Adb(adb, $"-s {d} shell am start -n {PanelActivity} --es pb_token {cfg.Get().Lan.UsbToken}", ct);
-            log.LogInformation("{Device}: adb reverse set up, panel opened", d);
+            _opened.Add(d);
+            log.LogInformation("{Device}: adb tunnel ready, panel opened", d);
         }
         // Settings › Display › home screen: the app offers itself as a home app; make it the default one (no root needed).
         if (cfg.Get().Display.HomeScreen)
@@ -153,8 +160,21 @@ public sealed class AdbReverse(ConfigStore cfg, ILogger<AdbReverse> log) : Backg
             WorkingDirectory = AppPaths.NeutralCwd,
         };
         using var p = Process.Start(psi)!;
-        var output = await p.StandardOutput.ReadToEndAsync(ct);
-        await p.WaitForExitAsync(ct);
-        return output;
+        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        timeout.CancelAfter(TimeSpan.FromSeconds(10));
+        try
+        {
+            var output = p.StandardOutput.ReadToEndAsync(timeout.Token);
+            var error = p.StandardError.ReadToEndAsync(timeout.Token);
+            await Task.WhenAll(output, error, p.WaitForExitAsync(timeout.Token));
+            if (p.ExitCode != 0) throw new InvalidOperationException($"ADB command exited with code {p.ExitCode}");
+            return await output;
+        }
+        catch (OperationCanceledException)
+        {
+            try { if (!p.HasExited) p.Kill(); } catch (InvalidOperationException) { }
+            ct.ThrowIfCancellationRequested();
+            throw new TimeoutException("ADB command timed out");
+        }
     }
 }

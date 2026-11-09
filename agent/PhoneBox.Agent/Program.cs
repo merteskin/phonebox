@@ -137,7 +137,8 @@ app.Use(async (ctx, next) =>
 app.MapGet("/api/pair", (ConfigStore cfg) =>
 {
     var lan = cfg.Get().Lan;
-    if (!lan.Enabled || lanCert is null) return Results.Json(new { enabled = false });
+    if (!lan.Enabled) return Results.Json(new { enabled = false });
+    if (lanCert is null) return Results.StatusCode(StatusCodes.Status503ServiceUnavailable);
     return Results.Json(new
     {
         enabled = true,
@@ -308,7 +309,7 @@ app.MapGet("/api/stream", async (HttpContext ctx, PushStore push, SessionMonitor
 {
     var ct = ctx.RequestAborted;
     var isPhone = ctx.Request.Headers.ContainsKey("X-PhoneBox-App");
-    var via = ctx.Connection.LocalPort == Port ? "USB/local" : "Wi-Fi";
+    var via = ctx.Connection.LocalPort == UsbPort ? "USB/ADB" : ctx.Connection.LocalPort == Port ? "local" : "Wi-Fi";
     log.LogInformation("live stream opened ({Who}, {Via})", isPhone ? "phone" : "other client", via);
     ctx.Response.ContentType = "text/event-stream";
     ctx.Response.Headers["X-Accel-Buffering"] = "no";
@@ -376,7 +377,9 @@ app.MapPost("/api/approvals/{id}", (string id, string decision, ApprovalStore a)
 app.MapGet("/api/widget/{page}/{widget}", (string page, string widget, bool? force, CommandRunner runner) =>
     runner.Get(page, widget, force == true) is { } r ? Results.Json(r) : Results.NotFound());
 
-app.MapGet("/api/config", (ConfigStore cfg) => Results.Json(new { version = cfg.Version, config = cfg.Get().ToPublic() }));
+app.MapGet("/api/config", (ConfigStore cfg) => cfg.PanelSettings() is { } settings
+    ? Results.Json(settings)
+    : Results.StatusCode(StatusCodes.Status503ServiceUnavailable));
 
 app.MapGet("/api/art", (MediaMonitor media) =>
     media.Art is { } art ? Results.File(art.Bytes, art.Mime) : Results.NotFound());

@@ -39,6 +39,7 @@ const store = {
 
 let cfg = PREVIEW ? { ...DEFAULT_CFG, pages: [] } : { ...DEFAULT_CFG, ...store.get('cfg', {}) };
 let cfgVersion = null;
+let cfgLoading = false;
 let online = null;
 let lastTouch = Date.now();
 let wakeUntil = 0;
@@ -2346,19 +2347,21 @@ function applyDisplay() {
 }
 
 async function loadConfig() {
-  if (PREVIEW) return;
+  if (PREVIEW || cfgLoading) return;
+  cfgLoading = true;
   try {
     const r = await api('/config');
+    if (!Array.isArray(r?.config?.pages)) return;
     const before = JSON.stringify(cfg);
     cfg = { ...DEFAULT_CFG, ...r.config };
     cfgVersion = r.version;
+    store.set('cfg', cfg);
     if (JSON.stringify(cfg) !== before) {
-      store.set('cfg', cfg);
       buildLayout();
       applyDisplay();
       loadWeather();
     }
-  } catch (_) {}
+  } catch (_) {} finally { cfgLoading = false; }
 }
 
 async function loadQuotas() {
@@ -2401,7 +2404,7 @@ function applyState(s) {
   D.state = s;
   media = s.media ? { ...s.media, at: performance.now() } : null;
   setOnline(true);
-  if (s.cfgVersion !== undefined && cfgVersion !== null && s.cfgVersion !== cfgVersion) loadConfig();
+  if (s.cfgVersion !== undefined && s.cfgVersion !== cfgVersion) loadConfig();
   if (s.pushVersion !== undefined && s.pushVersion !== pushVersion) loadPush();
   if (evSeq != null) for (const e of s.events || []) if (e.seq > evSeq) handleEvent(e);
   evSeq = Math.max(evSeq ?? 0, s.evSeq ?? 0);
