@@ -323,11 +323,13 @@ function keyButton(s) {
 
 // ---------------------------------------------------------------- media (shared state, any number of widgets)
 let media = null;          // last media state + the time it was received
-let mediaWave = [];
+const WAVE_HISTORY = 40;
+let mediaWave = Array(WAVE_HISTORY).fill(0);
+let waveLevel = 0;
 let volDragging = false;
 const DEFAULT_AMBIENT = '45, 212, 191';
 
-function averageColor(img) {
+function coverStyle(img) {
   try {
     const c = document.createElement('canvas');
     c.width = c.height = 16;
@@ -340,13 +342,24 @@ function averageColor(img) {
       if (mx < 30 || mx - mn < 20) continue; // skip very dark / grey pixels
       r += d[i]; gg += d[i + 1]; b += d[i + 2]; n++;
     }
-    if (!n) return null;
-    const [R, G, B] = [r / n, gg / n, b / n];
-    const k = 220 / (Math.max(R, G, B) || 1); // normalise brightness
-    return [R, G, B].map((v) => Math.round(Math.min(255, v * k))).join(', ');
+    const k = 220 / (Math.max(r, gg, b) || 1); // normalise brightness
+    const rgb = n ? [r, gg, b].map((v) => Math.round(Math.min(255, v * k))).join(', ') : DEFAULT_AMBIENT;
+    return { rgb, backdrop: c.toDataURL('image/png') };
   } catch (_) { return null; }
 }
 const setAmbient = (rgb) => document.documentElement.style.setProperty('--ambient', rgb || DEFAULT_AMBIENT);
+
+function updateWave(levels) {
+  if (!levels.length) {
+    waveLevel = 0;
+    mediaWave = Array(WAVE_HISTORY).fill(0);
+  } else {
+    const rms = Math.sqrt(levels.reduce((sum, value) => sum + value * value, 0) / levels.length) / 100;
+    waveLevel += (Math.min(1, rms) - waveLevel) * (rms > waveLevel ? .58 : .29);
+    mediaWave = [...mediaWave.slice(1), waveLevel];
+  }
+  if (!nightOn) emit('wave');
+}
 
 const MEDIA_HTML = `
   <div class="m-top">
@@ -771,29 +784,82 @@ W.media = {
     const q = (s) => box.querySelector(s);
     const img = q('.art'), vol = q('.volr');
     const wave = q('.m-wave');
-    let artId = -1, volTimer = 0;
+    let artKey = '', artAttempt = 0, nextArtTry = 0, volTimer = 0;
+    let waveColor = DEFAULT_AMBIENT;
     let drawnWave;
     const paintWave = () => {
       const levels = media?.playing && media.app === 'Spotify' ? mediaWave : null;
       if (levels === drawnWave || !wave.clientWidth || !wave.clientHeight) return;
       drawnWave = levels;
-      // A single low-resolution canvas keeps the work off the WebView's DOM and compositor.
       const g = wave.getContext('2d');
       const w = wave.clientWidth, ht = wave.clientHeight;
       if (wave.width !== w || wave.height !== ht) { wave.width = w; wave.height = ht; }
       g.clearRect(0, 0, w, ht);
-      const step = w / (levels?.length || 40);
-      const barWidth = Math.max(1, step - 3);
-      g.fillStyle = levels?.length ? 'rgba(255,255,255,.52)' : 'rgba(255,255,255,.18)';
-      g.beginPath();
-      for (let i = 0; i < (levels?.length || 40); i++) {
-        const height = Math.max(2, ht * (levels?.[i] || 0) / 100);
-        g.roundRect(i * step, (ht - height) / 2, barWidth, height, 2);
+      const center = ht / 2;
+      const ink = g.createLinearGradient(0, 0, w, 0);
+      ink.addColorStop(0, 'rgba(255,255,255,.06)');
+      ink.addColorStop(.65, `rgba(${waveColor},.56)`);
+      ink.addColorStop(1, 'rgba(255,255,255,.8)');
+      g.strokeStyle = ink;
+      g.lineWidth = 1.2;
+      if (!levels) {
+        g.beginPath();
+        g.moveTo(0, center);
+        g.lineTo(w, center);
+        g.stroke();
+        return;
       }
+      const step = w / (levels.length - 1);
+      const edge = (side) => {
+        const y = i => center + side * (1 + levels[i] * ht * .37);
+        g.moveTo(0, y(0));
+        for (let i = 1; i < levels.length - 1; i++)
+          g.quadraticCurveTo(i * step, y(i), (i + .5) * step, (y(i) + y(i + 1)) / 2);
+        g.lineTo(w, y(levels.length - 1));
+      };
+      const glow = g.createLinearGradient(0, 0, w, 0);
+      glow.addColorStop(0, 'transparent');
+      glow.addColorStop(1, `rgba(${waveColor},.32)`);
+      g.beginPath();
+      edge(-1);
+      g.lineTo(w, center);
+      g.lineTo(0, center);
+      g.closePath();
+      edge(1);
+      g.lineTo(w, center);
+      g.lineTo(0, center);
+      g.closePath();
+      g.fillStyle = glow;
       g.fill();
+      g.beginPath();
+      edge(-1);
+      edge(1);
+      g.stroke();
     };
-    img.addEventListener('load', () => { img.classList.add('on'); setAmbient(averageColor(img)); });
-    img.addEventListener('error', () => img.classList.remove('on'));
+    const clearCover = () => {
+      img.classList.remove('on');
+      img.removeAttribute('src');
+      box.style.removeProperty('--media-cover');
+      waveColor = DEFAULT_AMBIENT;
+      drawnWave = undefined;
+      setAmbient(null);
+    };
+    img.addEventListener('load', () => {
+      if (!img.naturalWidth) return;
+      img.classList.add('on');
+      nextArtTry = Infinity;
+      const art = coverStyle(img);
+      if (art) {
+        waveColor = art.rgb;
+        box.style.setProperty('--media-cover', `url("${art.backdrop}")`);
+        drawnWave = undefined;
+        setAmbient(art.rgb);
+      }
+    });
+    img.addEventListener('error', () => {
+      img.classList.remove('on');
+      if (artKey) nextArtTry = performance.now() + 2500;
+    });
     box.querySelectorAll('[data-media]').forEach((btn) => btn.addEventListener('click', async () => {
       haptic();
       const action = btn.dataset.media;
@@ -849,7 +915,7 @@ W.media = {
           q('.m-artist').textContent = 'Press ▶ to resume';
           q('.fill').style.width = '0';
           q('.m-pos').textContent = q('.m-dur').textContent = '0:00';
-          if (artId !== 0) { artId = 0; img.classList.remove('on'); setAmbient(null); }
+          if (artKey) { artKey = ''; clearCover(); }
           return;
         }
         box.classList.toggle('playing', m.playing);
@@ -857,10 +923,15 @@ W.media = {
         q('.m-title').textContent = m.title || 'Unknown track';
         q('.m-artist').textContent = [m.artist, m.album].filter(Boolean).join(' · ') || '—';
         q('.m-dur').textContent = fmtTime(m.durMs);
-        if (m.artId !== artId) {
-          artId = m.artId;
-          if (m.artId) img.src = `${API}/art?id=${m.artId}`;
-          else { img.classList.remove('on'); setAmbient(null); }
+        const key = m.artId ? JSON.stringify([m.app, m.title, m.artist, m.album, m.artId]) : '';
+        if (key !== artKey) {
+          artKey = key;
+          nextArtTry = 0;
+          clearCover();
+        }
+        if (artKey && performance.now() >= nextArtTry) {
+          nextArtTry = Infinity;
+          img.src = `${API}/art?id=${m.artId}&try=${++artAttempt}`;
         }
       },
     };
@@ -2456,11 +2527,11 @@ let streamOn = false;
 let lastStateAt = 0;
 window.onAgentStream = (event, data) => {
   if (event === 'open') { streamOn = true; return; }
-  if (event === 'close') { streamOn = false; mediaWave = []; emit('wave'); return; }
+  if (event === 'close') { streamOn = false; updateWave([]); return; }
   let d;
   try { d = JSON.parse(data); } catch (_) { return; }
   if (event === 'state') applyState(d);
-  else if (event === 'wave' && Array.isArray(d)) { mediaWave = d; if (!nightOn) emit('wave'); }
+  else if (event === 'wave' && Array.isArray(d)) updateWave(d);
   else if (event === 'work') applyWork(d);
   else if (event === 'event' && d.seq > (evSeq ?? 0)) { evSeq = d.seq; handleEvent(d); }
 };
