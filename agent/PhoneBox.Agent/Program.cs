@@ -59,6 +59,9 @@ builder.Services.AddSingleton<CommandRunner>();
 builder.Services.AddSingleton<ApprovalStore>();
 AddMonitor<SystemMonitor>(builder.Services);
 AddMonitor<MediaMonitor>(builder.Services);
+#if WINDOWS
+AddMonitor<SpotifyWave>(builder.Services);
+#endif
 AddMonitor<QuotaMonitor>(builder.Services);
 AddMonitor<ProcessMonitor>(builder.Services);
 AddMonitor<SessionMonitor>(builder.Services);
@@ -324,6 +327,14 @@ app.MapGet("/api/stream", async (HttpContext ctx, PushStore push, SessionMonitor
     push.Emitted += OnEmit;
     try
     {
+        Func<int[]?>? readWave = null;
+#if WINDOWS
+        if (ctx.Request.Query["wave"] == "1")
+            readWave = ctx.RequestServices.GetRequiredService<SpotifyWave>().Read;
+#endif
+        var media = ctx.RequestServices.GetRequiredService<MediaMonitor>();
+        int[]? sentWave = null;
+        var nextWave = 0L;
         var seq = push.Seq;
         var lastWork = "";
         var next = 0L;
@@ -344,7 +355,24 @@ app.MapGet("/api/stream", async (HttpContext ctx, PushStore push, SessionMonitor
                 }
                 next = now + 1000;
             }
-            await wake.WaitAsync(TimeSpan.FromMilliseconds(Math.Max(5, next - DateTimeOffset.UtcNow.ToUnixTimeMilliseconds())), ct);
+            var wakeAt = next;
+            if (readWave is not null && media.Snapshot() is { App: "Spotify", Playing: true })
+            {
+                if (now >= nextWave)
+                {
+                    var wave = readWave();
+                    if (!ReferenceEquals(wave, sentWave)) await Send("wave", wave ?? []);
+                    sentWave = wave;
+                    nextWave = now + 80;
+                }
+                wakeAt = Math.Min(wakeAt, nextWave);
+            }
+            else if (sentWave is not null)
+            {
+                await Send("wave", Array.Empty<int>());
+                sentWave = null;
+            }
+            await wake.WaitAsync(TimeSpan.FromMilliseconds(Math.Max(5, wakeAt - DateTimeOffset.UtcNow.ToUnixTimeMilliseconds())), ct);
         }
     }
     catch (OperationCanceledException) { }

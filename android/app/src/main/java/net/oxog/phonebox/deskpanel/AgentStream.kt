@@ -36,7 +36,7 @@ class AgentStream(private val link: AgentLink, private val deliver: (event: Stri
             var opened = false
             var body: Closeable? = null
             try {
-                val (route, reply) = link.stream("/api/stream") ?: throw java.io.IOException("offline")
+                val (route, reply) = link.stream("/api/stream?wave=1") ?: throw java.io.IOException("offline")
                 if (reply.code != 200) { reply.body.close(); throw java.io.IOException("HTTP ${reply.code}") }
                 if (!alive()) { reply.body.close(); break }
                 body = reply.body

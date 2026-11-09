@@ -323,6 +323,7 @@ function keyButton(s) {
 
 // ---------------------------------------------------------------- media (shared state, any number of widgets)
 let media = null;          // last media state + the time it was received
+let mediaWave = [];
 let volDragging = false;
 const DEFAULT_AMBIENT = '45, 212, 191';
 
@@ -352,7 +353,7 @@ const MEDIA_HTML = `
     <div class="art-wrap"><img class="art" alt=""><div class="art-ph">♪</div></div>
     <div class="m-text"><div class="m-app">Media</div><div class="m-title">Nothing playing</div><div class="m-artist">Start something on the PC</div></div>
   </div>
-  <div class="m-wave"><i style="--h:59%;--d:0.2s"></i><i style="--h:68%;--d:0.0s"></i><i style="--h:27%;--d:0.8s"></i><i style="--h:30%;--d:0.5s"></i><i style="--h:92%;--d:0.0s"></i><i style="--h:82%;--d:0.3s"></i><i style="--h:22%;--d:0.1s"></i><i style="--h:73%;--d:0.6s"></i><i style="--h:26%;--d:0.3s"></i><i style="--h:29%;--d:0.8s"></i><i style="--h:72%;--d:0.0s"></i><i style="--h:90%;--d:0.1s"></i><i style="--h:46%;--d:0.9s"></i><i style="--h:25%;--d:0.9s"></i><i style="--h:92%;--d:0.6s"></i><i style="--h:24%;--d:0.3s"></i><i style="--h:23%;--d:0.8s"></i><i style="--h:35%;--d:0.4s"></i><i style="--h:71%;--d:0.2s"></i><i style="--h:87%;--d:0.1s"></i><i style="--h:91%;--d:0.4s"></i><i style="--h:89%;--d:0.2s"></i><i style="--h:31%;--d:0.9s"></i><i style="--h:91%;--d:0.3s"></i><i style="--h:65%;--d:0.1s"></i><i style="--h:88%;--d:0.1s"></i><i style="--h:90%;--d:0.0s"></i><i style="--h:97%;--d:0.3s"></i><i style="--h:81%;--d:0.8s"></i><i style="--h:72%;--d:0.5s"></i><i style="--h:77%;--d:0.9s"></i><i style="--h:76%;--d:0.5s"></i><i style="--h:56%;--d:0.3s"></i><i style="--h:41%;--d:0.3s"></i><i style="--h:28%;--d:0.9s"></i><i style="--h:56%;--d:0.8s"></i><i style="--h:81%;--d:0.5s"></i><i style="--h:75%;--d:0.4s"></i><i style="--h:95%;--d:0.1s"></i><i style="--h:33%;--d:0.8s"></i><i style="--h:71%;--d:0.2s"></i><i style="--h:61%;--d:0.2s"></i><i style="--h:80%;--d:0.6s"></i><i style="--h:23%;--d:0.1s"></i><i style="--h:89%;--d:0.9s"></i><i style="--h:58%;--d:0.5s"></i><i style="--h:62%;--d:0.9s"></i><i style="--h:81%;--d:0.9s"></i><i style="--h:76%;--d:0.1s"></i><i style="--h:29%;--d:0.4s"></i><i style="--h:78%;--d:0.1s"></i><i style="--h:25%;--d:0.4s"></i><i style="--h:100%;--d:0.9s"></i><i style="--h:75%;--d:0.4s"></i><i style="--h:67%;--d:0.5s"></i><i style="--h:20%;--d:0.7s"></i></div>
+  <canvas class="m-wave" aria-hidden="true"></canvas>
   <div class="m-progress"><div class="bar"><div class="fill"></div></div><div class="times"><span class="m-pos">0:00</span><span class="m-dur">0:00</span></div></div>
   <div class="m-controls">
     <button class="ic" data-media="prev" aria-label="Previous"><svg viewBox="0 0 24 24"><path d="M6 5h2v14H6zM20 5v14L9.5 12z"/></svg></button>
@@ -764,12 +765,33 @@ W.forecast = {
 };
 
 W.media = {
-  needs: ['state', 'fast'],
+  needs: ['state', 'fast', 'wave'],
   create(box) {
     box.innerHTML = MEDIA_HTML;
     const q = (s) => box.querySelector(s);
     const img = q('.art'), vol = q('.volr');
+    const wave = q('.m-wave');
     let artId = -1, volTimer = 0;
+    let drawnWave;
+    const paintWave = () => {
+      const levels = media?.playing && media.app === 'Spotify' ? mediaWave : null;
+      if (levels === drawnWave || !wave.clientWidth || !wave.clientHeight) return;
+      drawnWave = levels;
+      // A single low-resolution canvas keeps the work off the WebView's DOM and compositor.
+      const g = wave.getContext('2d');
+      const w = wave.clientWidth, ht = wave.clientHeight;
+      if (wave.width !== w || wave.height !== ht) { wave.width = w; wave.height = ht; }
+      g.clearRect(0, 0, w, ht);
+      const step = w / (levels?.length || 40);
+      const barWidth = Math.max(1, step - 3);
+      g.fillStyle = levels?.length ? 'rgba(255,255,255,.52)' : 'rgba(255,255,255,.18)';
+      g.beginPath();
+      for (let i = 0; i < (levels?.length || 40); i++) {
+        const height = Math.max(2, ht * (levels?.[i] || 0) / 100);
+        g.roundRect(i * step, (ht - height) / 2, barWidth, height, 2);
+      }
+      g.fill();
+    };
     img.addEventListener('load', () => { img.classList.add('on'); setAmbient(averageColor(img)); });
     img.addEventListener('error', () => img.classList.remove('on'));
     box.querySelectorAll('[data-media]').forEach((btn) => btn.addEventListener('click', async () => {
@@ -805,6 +827,7 @@ W.media = {
 
     return {
       update(kind) {
+        if (kind === 'wave') { paintWave(); return; }
         if (kind === 'fast') {
           if (!media || !(media.durMs > 0)) return;
           const pos = Math.min(media.durMs, media.posMs + (media.playing ? performance.now() - media.at : 0));
@@ -812,6 +835,7 @@ W.media = {
           q('.m-pos').textContent = fmtTime(pos);
           return;
         }
+        paintWave();
         const m = D.state?.media, a = D.state?.audio;
         if (a) {
           box.classList.toggle('muted-on', !!a.muted);
@@ -2432,10 +2456,11 @@ let streamOn = false;
 let lastStateAt = 0;
 window.onAgentStream = (event, data) => {
   if (event === 'open') { streamOn = true; return; }
-  if (event === 'close') { streamOn = false; return; }
+  if (event === 'close') { streamOn = false; mediaWave = []; emit('wave'); return; }
   let d;
   try { d = JSON.parse(data); } catch (_) { return; }
   if (event === 'state') applyState(d);
+  else if (event === 'wave' && Array.isArray(d)) { mediaWave = d; if (!nightOn) emit('wave'); }
   else if (event === 'work') applyWork(d);
   else if (event === 'event' && d.seq > (evSeq ?? 0)) { evSeq = d.seq; handleEvent(d); }
 };
