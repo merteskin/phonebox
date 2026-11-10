@@ -2311,6 +2311,15 @@ let mounted = [];     // { pi, def, inst, ctx, dirty }
 let layoutKey = '';
 let curPage = 0;
 
+// The compact launcher footer is one key tall. With more keys than columns W.shortcuts wraps into extra
+// rows that would be clipped, so such a widget keeps the normal full-height grid row instead.
+function shortcutsFitOneRow(o) {
+  const all = cfg.shortcuts || [];
+  const ids = Array.isArray(o.ids) && o.ids.length ? o.ids : null;
+  const n = ids ? ids.filter((id) => all.some((s) => s.id === id)).length : all.length;
+  return n > 0 && n <= Math.min(8, Math.max(1, o.columns || 4));
+}
+
 function buildLayout() {
   const enabled = (cfg.pages || []).filter((p) => p.enabled !== false && Array.isArray(p.widgets));
   const next = enabled.length ? enabled : FALLBACK_PAGES;
@@ -2329,7 +2338,7 @@ function buildLayout() {
       const def = W[w.type];
       if (!def) continue;
       const box = h('div', `w w-${w.type}${def.bare ? ' bare' : ' card'}`);
-      if (p.id === 'home' && w.type === 'shortcuts' && w.x === 0 && w.y === 5 && w.w === 12 && w.h === 1) {
+      if (p.id === 'home' && w.type === 'shortcuts' && w.x === 0 && w.y === 5 && w.w === 12 && w.h === 1 && shortcutsFitOneRow(w.options || {})) {
         grid.classList.add('grid-with-launcher');
         box.classList.add('w-shortcuts-footer');
       }

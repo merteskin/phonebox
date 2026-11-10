@@ -59,6 +59,9 @@ class AgentStream(private val link: AgentLink, private val deliver: (event: Stri
                                 if (route == AgentLink.Route.WIFI && SystemClock.elapsedRealtime() >= nextUsbCheck) {
                                     switchToUsb = link.hasUsb()
                                     if (switchToUsb) break
+                                    // The agent checks the key only when a request starts, so re-check it here:
+                                    // a revoked key must end this stream, as the old 60 s reconnect did.
+                                    if (!link.wifiAuthorized()) break
                                     nextUsbCheck = SystemClock.elapsedRealtime() + 60_000
                                 }
                             }

@@ -57,6 +57,14 @@ class AgentLink(context: Context) {
         reply.body.use { reply.code == 200 }
     } ?: false
 
+    /**
+     * False only when the agent rejects our Wi-Fi key (401/403), e.g. after "New key" in Settings.
+     * Network errors count as authorized so a brief hiccup does not tear down a working stream.
+     */
+    fun wifiAuthorized(): Boolean = wifi("GET", "/api/state", 2000)?.let { reply ->
+        reply.body.use { reply.code != 401 && reply.code != 403 }
+    } ?: true
+
     /** Forwards a request (method + path with query) to the agent over the best available route. */
     fun request(method: String, pathAndQuery: String): Reply {
         usb(method, pathAndQuery)?.let {
