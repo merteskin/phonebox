@@ -199,10 +199,12 @@ const netMax = () => Math.max(1, ...hist.down, ...hist.up) * 1.15;
 
 const METRICS = {
   cpu: { label: 'CPU', name: 'Processor', color: '--cpu', unit: '%', max: () => 100, val: (s) => s.pc?.cpu,
-    sub: (s) => [shortCpu(s.pc?.cpuName), s.pc?.cpuTemp != null ? `${Math.round(s.pc.cpuTemp)}°C` : null].filter(Boolean).join(' · '), title: (s) => s.pc?.cpuName },
+    sub: (s) => [shortCpu(s.pc?.cpuName), s.pc?.cpuTemp != null ? `${Math.round(s.pc.cpuTemp)}°C` : null].filter(Boolean).join(' · '), title: (s) => s.pc?.cpuName,
+    hot: (s) => s.pc?.cpuTemp >= 90 },
   gpu: { label: 'GPU', name: 'Graphics', color: '--gpu', unit: '%', max: () => 100, val: (s) => gpuOf(s)?.util,
     sub: (s) => { const g = gpuOf(s); if (!g) return 'No GPU data'; const n = shortGpu(g.name);
-      return [n, g.temp != null ? `${Math.round(g.temp)}°C` : null, g.power != null ? `${Math.round(g.power)} W` : null].filter(Boolean).join(' · '); }, title: (s) => gpuOf(s)?.name },
+      return [n, g.temp != null ? `${Math.round(g.temp)}°C` : null, g.power != null ? `${Math.round(g.power)} W` : null].filter(Boolean).join(' · '); }, title: (s) => gpuOf(s)?.name,
+    hot: (s) => gpuOf(s)?.temp >= 90 },
   ram: { label: 'RAM', name: 'Memory', color: '--ram', unit: 'GB', max: (s) => s.pc?.ramTotalGb || 1, val: (s) => s.pc?.ramUsedGb, fmt: r1,
     pct: (s) => (s.pc ? (s.pc.ramUsedGb / s.pc.ramTotalGb) * 100 : null), sub: (s) => (s.pc ? `/ ${Math.round(s.pc.ramTotalGb)} GB` : '') },
   vram: { label: 'VRAM', name: 'Video memory', color: '--gpu', unit: '%', max: () => 100,
@@ -1059,6 +1061,7 @@ W.stat = {
         const s = D.state;
         if (!s) return;
         motion.update(s);
+        box.classList.toggle('hot', !!m.hot?.(s));
         const detail = m.sub?.(s) || ' ';
         if (sub.textContent !== detail) sub.textContent = detail;
         draw(performance.now());
@@ -1602,6 +1605,7 @@ W.push = {
       lastAt = item.at;
       const v = pushView(item);
       const lvl = levelOf(v);
+      box.classList.toggle('px-alert', item.data?.alert === true);
       const c = typeof v.color === 'string' && CSS.supports('color', v.color) ? v.color : LEVEL_COLOR[lvl] || '';
       if (c) box.style.setProperty('--c', c); else box.style.removeProperty('--c');
       const unit = v.unit ?? o.unit ?? '';
@@ -1691,7 +1695,7 @@ $('csKind').addEventListener('click', (e) => {
 function paintChart() {
   if (!pxc) return;
   const item = D.push[pxc.key];
-  const at = (item?.at || 0) + pxc.bar + pxc.kind;
+  const at = (item?.at || 0) + pxc.bar + pxc.kind + (D.push.kripto?.at || 0);
   if (at === pxc.at) return;
   pxc.at = at;
   [...$('csBars').children].forEach((b, i) => b.classList.toggle('on', CH_BARS[i][0] === pxc.bar));
@@ -1711,6 +1715,20 @@ function paintChart() {
   $('csSub').textContent = `${last.toFixed(last < 1 ? 5 : last < 100 ? 3 : 2)}  ·  ${ch >= 0 ? '+' : '−'}${Math.abs(ch).toFixed(2)}%  ·  ${a.length} × ${lab}`;
   let lo = Infinity, hi = -Infinity;
   for (const x of a) { if (x[3] < lo) lo = x[3]; if (x[2] > hi) hi = x[2]; }
+  // positions, pending orders and paper trades of this coin as horizontal levels
+  const coin = pxc.key.slice(6).toUpperCase(), k = D.push.kripto?.data || {}, lv = [];
+  for (const p of k.pos || []) if (p.coin === coin) { lv.push([+p.entry, 'Giriş', '#60a5fa']); if (p.liq) lv.push([+p.liq, 'Likidasyon', '#f97316']); }
+  for (const o of k.orders || []) if (o.coin === coin && o.px) lv.push([+o.px, (o.dir || 'Emir') + ' emri', '#a78bfa']);
+  for (const p of k.paper || []) if (p.coin === coin) {
+    lv.push([+p.entry, 'Kağıt giriş', '#60a5fa']);
+    if (p.stop) lv.push([+p.stop, 'Stop', '#ef4444']);
+    if (p.tp) lv.push([+p.tp, 'Hedef', '#22c55e']);
+  }
+  const reach = { '1m': .02, '5m': .03, '15m': .05, '1H': .08, '4H': .15, '1D': .3 }[pxc.bar] || .05;
+  const near = lv.filter(([v]) => Number.isFinite(v) && v > 0 && Math.abs(v / last - 1) <= reach);
+  const far = lv.filter(([v]) => Number.isFinite(v) && v > 0).length - near.length;
+  if (far) $('csSub').textContent += `  ·  ${far} seviye bu aralığın dışında`;
+  for (const [v] of near) { if (v < lo) lo = v; if (v > hi) hi = v; }
   const pad = (hi - lo) * 0.06 || 1; lo -= pad; hi += pad;
   const R = 70, B = 24, pw = W - R, ph = H - B;
   const Y = (v) => (hi - v) / (hi - lo) * ph;
@@ -1722,7 +1740,7 @@ function paintChart() {
     g.beginPath(); g.moveTo(0, y); g.lineTo(pw, y); g.stroke();
     g.fillText(v.toFixed(dec), pw + 6, y + 4);
   }
-  const tf = pxc.bar === '1D' ? { day: '2-digit', month: '2-digit' } : pxc.bar === '4H' ? { day: '2-digit', hour: '2-digit' } : { hour: '2-digit', minute: '2-digit' };
+  const tf = pxc.bar === '1D' ? { day: '2-digit', month: '2-digit' } : pxc.bar === '4H' || pxc.bar === '1H' ? { day: '2-digit', month: '2-digit', hour: '2-digit' } : { hour: '2-digit', minute: '2-digit' };
   for (let i = 0; i < a.length; i += Math.ceil(a.length / 6)) {
     g.fillText(new Date(a[i][0] * 1000).toLocaleString('tr-TR', tf), i * step, H - 6);
   }
@@ -1742,6 +1760,12 @@ function paintChart() {
       const y1 = Y(Math.max(o, c)), y2 = Y(Math.min(o, c));
       g.fillRect(x - bw / 2, y1, bw, Math.max(1, y2 - y1));
     }
+  }
+  for (const [v, label, col] of near) {
+    const y = Math.round(Y(v)) + .5;
+    g.setLineDash([8, 5]); g.strokeStyle = col; g.lineWidth = 1.5;
+    g.beginPath(); g.moveTo(0, y); g.lineTo(pw, y); g.stroke(); g.setLineDash([]);
+    g.fillStyle = col; g.fillText(`${label} ${v.toFixed(dec)}`, 6, y - 5);
   }
   const ly = Math.round(Y(last)) + .5;
   g.setLineDash([4, 4]); g.strokeStyle = '#e5e7eb'; g.lineWidth = 1;

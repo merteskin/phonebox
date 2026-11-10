@@ -26,8 +26,8 @@ def push(key, payload, ttl=300):
          {"Content-Type": "application/json"}, "POST")
 
 
-def notify(title, text):
-    http(f"{AGENT}/api/notify", json.dumps({"title": title, "text": text}).encode(),
+def notify(title, text, **extra):
+    http(f"{AGENT}/api/notify", json.dumps({"title": title, "text": text, **extra}).encode(),
          {"Content-Type": "application/json"}, "POST")
 
 
@@ -57,16 +57,78 @@ FAST_COINS = ("BTC", "ETH", "TAO")
 _fast = {"at": 0.0}
 
 
+MOVES = json.loads(os.getenv("BRIDGE_MOVES", "[[15, 10], [10, 5], [5, 3]]"))  # [dakika, %]: ani hareket uyarısı
+_hist: dict[str, list] = {}   # coin -> [(zaman, fiyat)], son 15 dk
+_moved: dict[tuple, tuple] = {}  # (coin, dakika) -> (zaman, %)
+_flash: dict[str, float] = {}  # coin -> kutunun yanıp söneceği son an
+_fund = {"at": 0.0, "data": {}}
+
+
+def move_alert(c, last):
+    """Fiyat son N dakikadaki dip/tepeye göre eşiği aştıysa bildirim gönderir ve kutuyu 1 dk yakıp söndürür."""
+    now = time.time()
+    h = _hist.setdefault(c, [])
+    h.append((now, last))
+    span = max(m for m, _ in MOVES) * 60
+    while h and now - h[0][0] > span:
+        h.pop(0)
+    for mins, lim in MOVES:
+        w = [p for t, p in h if now - t <= mins * 60]
+        if len(w) < 2:
+            continue
+        lo, hi = min(w), max(w)
+        pct = (last / lo - 1) * 100 if last - lo >= hi - last else (last / hi - 1) * 100
+        if abs(pct) < lim:
+            continue
+        at, prev = _moved.get((c, mins), (0, 0))
+        if now - at >= mins * 60 or pct * prev < 0 or abs(pct) - abs(prev) >= lim / 2:
+            _moved[(c, mins)] = (now, pct)
+            _flash[c] = now + 60
+            try:
+                notify(f"{c} {pct:+.1f}% · son {mins} dk", f"Son fiyat {fmt(last)}", level="warn", wake=True, seconds=10)
+            except Exception:
+                pass
+        break  # en büyük eşik yeter
+
+
 def fast():
     """Ana ekrandaki fiyat kutuları: OKX'in herkese açık ticker'ı, birkaç saniyede bir (key gerekmez)."""
+    if time.time() - _fund["at"] >= 60:
+        _fund["at"] = time.time()
+        for c in FAST_COINS:
+            try:
+                f = http(f"{OKX}/api/v5/public/funding-rate?instId={c}-USDT-SWAP")["data"][0]
+                _fund["data"][c] = float(f["fundingRate"]) * 100
+            except Exception:
+                pass
     for c in FAST_COINS:
         t = http(f"{OKX}/api/v5/market/ticker?instId={c}-USDT-SWAP")["data"][0]
         last = float(t["last"])
         ch = (last / float(t["open24h"]) - 1) * 100
-        push("px_" + c.lower(), {"title": c, "value": fmt(last), "sub": f"{ch:+.2f}% · 24s",
+        move_alert(c, last)
+        fr = _fund["data"].get(c)
+        push("px_" + c.lower(), {"title": c, "value": fmt(last),
+                                 "sub": f"{ch:+.2f}% · 24s" + (f" · F {fr:+.3f}%" if fr is not None else ""),
                                  "spark": (_spark["data"].get(c) or []) + [last],
+                                 "alert": time.time() < _flash.get(c, 0),
                                  "color": "#22c55e" if ch >= 0 else "#ef4444"})
     _fast["at"] = time.time()
+
+
+def home_pos(board):
+    """Ana ekran şeridi: açık pozisyonlar, bekleyen emirler ve kağıt pozisyonlar tek listede."""
+    it = []
+    for p in board["pos"]:
+        liq = f' · liq {(float(p["liq"]) / float(p["mark"]) - 1) * 100:+.1f}%' if p.get("liq") and p.get("mark") else ""
+        it.append({"label": f'{p["coin"]} {str(p.get("side") or "").upper()} {float(p.get("lev") or 0):.0f}x',
+                   "value": f'{p["upnl"]:+,.2f} ${liq}', "level": "ok" if p["upnl"] >= 0 else "error"})
+    for o in sorted(board["orders"], key=lambda o: abs(o.get("dist") or 999)):
+        dist = f' · {o["dist"]:+.1f}%' if o.get("dist") is not None else ""
+        it.append({"label": f'{o["coin"]} {o.get("dir") or ""} emri', "value": f'{fmt(o["px"])}{dist}'})
+    for p in board["paper"]:
+        it.append({"label": f'{p["coin"]} {str(p.get("side") or "").upper()} · kağıt',
+                   "value": f'{p["upnl"]:+,.2f} $ ({p["pct"]:+.1f}%)', "level": "ok" if p["upnl"] >= 0 else "error"})
+    push("home_pos", {"title": "Pozisyonlar ve emirler", "items": it or [{"label": "Açık pozisyon ya da emir yok", "value": ""}]})
 
 
 def tick():
@@ -129,6 +191,10 @@ def kriptobot():
     try:
         board = kripto_board(s)
         push("kripto", board)
+        try:
+            home_pos(board)
+        except Exception as e:
+            print(time.strftime("%H:%M:%S"), "pozisyon şeridi:", e)
         for c in board["coins"]:
             if c["s"] in FAST_COINS and time.time() - _fast["at"] > 15:  # hızlı döngü çalışmıyorsa yedek
                 push("px_" + c["s"].lower(), {"title": c["s"], "value": fmt(c["px"]), "sub": f'{c["ch"]:+.2f}% · 24s', "spark": c["spark"],
