@@ -15,8 +15,10 @@ public sealed record QuotaProvider(string Id, string Name, string Plan, IReadOnl
 /// <summary>
 /// Collects quota usage of AI subscriptions:
 ///  - Claude: api.anthropic.com/api/oauth/usage with the OAuth token from ~/.claude/.credentials.json
-///    (the endpoint behind Claude Code's /usage command). The token is only read and NEVER refreshed;
-///    Claude Code refreshes it itself (refreshing it here could break Claude Code's session).
+///    (the endpoint behind Claude Code's /usage command). The agent never refreshes the token itself
+///    (that could break Claude Code's session). The desktop app does not update this file, so when the token
+///    has expired and Claude is open on this PC, the agent runs "claude auth status", which makes the CLI
+///    refresh its own sign-in without sending a model request.
 ///  - Codex: live account limits through the local Codex app server, with session snapshots as a fallback.
 /// </summary>
 public sealed partial class QuotaMonitor(ILogger<QuotaMonitor> log) : BackgroundService
@@ -56,7 +58,7 @@ public sealed partial class QuotaMonitor(ILogger<QuotaMonitor> log) : Background
     }
 
     // ------------------------------------------------------------------ Claude
-    private async Task<bool> RefreshClaude(CancellationToken ct)
+    private async Task<bool> RefreshClaude(CancellationToken ct, bool retried = false)
     {
         string plan = "Claude";
         try
@@ -78,7 +80,8 @@ public sealed partial class QuotaMonitor(ILogger<QuotaMonitor> log) : Background
             if (string.IsNullOrEmpty(token)) { _claude = Keep(plan, "Not signed in to Claude Code"); return false; }
             if (expires > 0 && expires < DateTimeOffset.UtcNow.ToUnixTimeMilliseconds())
             {
-                _claude = Keep(plan, "Token expired; it will refresh when Claude Code runs");
+                if (!retried && await RefreshSignInViaCli(ct)) return await RefreshClaude(ct, retried: true);
+                _claude = Keep(plan, "Token expired; it refreshes while Claude is open on this PC");
                 return false;
             }
 
@@ -88,6 +91,8 @@ public sealed partial class QuotaMonitor(ILogger<QuotaMonitor> log) : Background
             using var res = await _http.SendAsync(req, ct);
             if (!res.IsSuccessStatusCode)
             {
+                if (res.StatusCode == System.Net.HttpStatusCode.Unauthorized && !retried && await RefreshSignInViaCli(ct))
+                    return await RefreshClaude(ct, retried: true);
                 _claude = Keep(plan, $"Could not fetch quota (HTTP {(int)res.StatusCode})");
                 return false;
             }
@@ -105,6 +110,79 @@ public sealed partial class QuotaMonitor(ILogger<QuotaMonitor> log) : Background
             _claude = Keep(plan, "Could not fetch quota: " + ex.Message);
             return false;
         }
+    }
+
+    private long _nextCliRefresh;
+
+    /// <summary>
+    /// Lets the Claude Code CLI refresh its expired sign-in ("claude auth status" refreshes the OAuth token and
+    /// writes it back to ~/.claude/.credentials.json without a model request). Only while Claude (desktop app or
+    /// CLI) is open on this PC, and at most every 10 minutes.
+    /// </summary>
+    private async Task<bool> RefreshSignInViaCli(CancellationToken ct)
+    {
+        if (Environment.TickCount64 < _nextCliRefresh || !ClaudeRunning()) return false;
+        _nextCliRefresh = Environment.TickCount64 + 600_000;
+        if (ClaudeCli() is not { } cli) { log.LogDebug("claude quota: Claude Code CLI not found"); return false; }
+        try
+        {
+            var start = new ProcessStartInfo(cli)
+            {
+                UseShellExecute = false, CreateNoWindow = true, RedirectStandardInput = true,
+                RedirectStandardOutput = true, RedirectStandardError = true, WorkingDirectory = AppPaths.NeutralCwd,
+            };
+            start.ArgumentList.Add("auth");
+            start.ArgumentList.Add("status");
+            using var process = Process.Start(start);
+            if (process is null) return false;
+            process.StandardInput.Close();
+            var drain = Task.WhenAll(process.StandardOutput.ReadToEndAsync(ct), process.StandardError.ReadToEndAsync(ct));
+            using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            timeout.CancelAfter(TimeSpan.FromSeconds(30));
+            try { await process.WaitForExitAsync(timeout.Token); }
+            catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+            {
+                try { process.Kill(entireProcessTree: true); } catch { }
+                return false;
+            }
+            try { await drain; } catch { }
+            log.LogInformation("claude quota: asked Claude Code to refresh its expired sign-in (exit {Code})", process.ExitCode);
+            return process.ExitCode == 0;
+        }
+        catch (Exception ex) when (!ct.IsCancellationRequested)
+        {
+            log.LogDebug("claude quota: CLI refresh failed: {Message}", ex.Message);
+            return false;
+        }
+    }
+
+    /// <summary>True while the Claude desktop app or a Claude Code CLI is running.</summary>
+    private static bool ClaudeRunning()
+    {
+        var processes = Process.GetProcessesByName("claude");
+        try { return processes.Length > 0; }
+        finally { foreach (var process in processes) process.Dispose(); }
+    }
+
+    /// <summary>
+    /// The Claude Code CLI from PATH or the native installer's folder. Never the desktop app's Claude.exe:
+    /// starting that with arguments would open the app instead.
+    /// </summary>
+    private static string? ClaudeCli()
+    {
+        if (!OperatingSystem.IsWindows()) return "claude";
+        var dirs = (Environment.GetEnvironmentVariable("PATH") ?? "").Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries)
+            .Append(Path.Combine(Home, ".local", "bin"));
+        foreach (var dir in dirs)
+        {
+            if (dir.Contains("AnthropicClaude", StringComparison.OrdinalIgnoreCase)) continue;
+            foreach (var name in new[] { "claude.exe", "claude.cmd" })
+            {
+                try { var path = Path.Combine(dir.Trim('"'), name); if (File.Exists(path)) return path; }
+                catch (ArgumentException) { }
+            }
+        }
+        return null;
     }
 
     /// <summary>On errors, keeps the last good values and attaches the error.</summary>
