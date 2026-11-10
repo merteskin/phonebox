@@ -199,7 +199,7 @@ const netMax = () => Math.max(1, ...hist.down, ...hist.up) * 1.15;
 
 const METRICS = {
   cpu: { label: 'CPU', name: 'Processor', color: '--cpu', unit: '%', max: () => 100, val: (s) => s.pc?.cpu,
-    sub: (s) => (s.pc?.cpuTemp != null ? `${Math.round(s.pc.cpuTemp)}°C` : shortCpu(s.pc?.cpuName)), title: (s) => s.pc?.cpuName },
+    sub: (s) => [shortCpu(s.pc?.cpuName), s.pc?.cpuTemp != null ? `${Math.round(s.pc.cpuTemp)}°C` : null].filter(Boolean).join(' · '), title: (s) => s.pc?.cpuName },
   gpu: { label: 'GPU', name: 'Graphics', color: '--gpu', unit: '%', max: () => 100, val: (s) => gpuOf(s)?.util,
     sub: (s) => { const g = gpuOf(s); if (!g) return 'No GPU data'; const n = shortGpu(g.name);
       return [n, g.temp != null ? `${Math.round(g.temp)}°C` : null, g.power != null ? `${Math.round(g.power)} W` : null].filter(Boolean).join(' · '); }, title: (s) => gpuOf(s)?.name },

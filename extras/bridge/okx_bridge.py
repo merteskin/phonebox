@@ -52,6 +52,21 @@ def lvl(pct):  # PhoneBox renk seviyeleri
 
 _mkt = {"funding": {}, "dom": None}
 _spark = {"at": 0, "data": {}}
+FAST = float(os.getenv("BRIDGE_FAST", "3"))  # ana ekran fiyat kutularının yenileme aralığı (sn)
+FAST_COINS = ("BTC", "ETH", "TAO")
+_fast = {"at": 0.0}
+
+
+def fast():
+    """Ana ekrandaki fiyat kutuları: OKX'in herkese açık ticker'ı, birkaç saniyede bir (key gerekmez)."""
+    for c in FAST_COINS:
+        t = http(f"{OKX}/api/v5/market/ticker?instId={c}-USDT-SWAP")["data"][0]
+        last = float(t["last"])
+        ch = (last / float(t["open24h"]) - 1) * 100
+        push("px_" + c.lower(), {"title": c, "value": fmt(last), "sub": f"{ch:+.2f}% · 24s",
+                                 "spark": (_spark["data"].get(c) or []) + [last],
+                                 "color": "#22c55e" if ch >= 0 else "#ef4444"})
+    _fast["at"] = time.time()
 
 
 def tick():
@@ -115,7 +130,7 @@ def kriptobot():
         board = kripto_board(s)
         push("kripto", board)
         for c in board["coins"]:
-            if c["s"] in ("BTC", "ETH", "TAO"):
+            if c["s"] in FAST_COINS and time.time() - _fast["at"] > 15:  # hızlı döngü çalışmıyorsa yedek
                 push("px_" + c["s"].lower(), {"title": c["s"], "value": fmt(c["px"]), "sub": f'{c["ch"]:+.2f}% · 24s', "spark": c["spark"],
                                               "color": "#22c55e" if c["ch"] >= 0 else "#ef4444"})
         try:
@@ -200,7 +215,7 @@ def sparks(coins):
     return out
 
 
-CHART_BARS = (("1m", 30), ("5m", 60), ("15m", 120), ("1H", 300), ("4H", 900), ("1D", 1800))  # bar -> yenileme sn
+CHART_BARS = (("1m", 15), ("5m", 60), ("15m", 120), ("1H", 300), ("4H", 900), ("1D", 1800))  # bar -> yenileme sn
 _chart: dict[tuple, tuple] = {}
 
 
@@ -290,9 +305,16 @@ def kripto_board(s):
 
 
 if __name__ == "__main__":
+    full = 0.0
     while True:
+        if time.time() - full >= PERIOD:
+            full = time.time()
+            try:
+                tick()
+            except Exception as e:
+                print(time.strftime("%H:%M:%S"), "hata:", e)
         try:
-            tick()
-        except Exception as e:
-            print(time.strftime("%H:%M:%S"), "hata:", e)
-        time.sleep(PERIOD)
+            fast()
+        except Exception:
+            pass  # OKX'e ulaşılamadı: kutular 20 sn'lik KriptoBot verisine döner
+        time.sleep(FAST)
