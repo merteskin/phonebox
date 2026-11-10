@@ -1669,7 +1669,7 @@ W.push = {
 };
 
 // ---------------------------------------------------------------- price chart sheet (push key "chart_<coin>")
-const CH_BARS = [['5m', '5 dk'], ['15m', '15 dk'], ['1H', '1 saat'], ['4H', '4 saat'], ['1D', '1 gün']];
+const CH_BARS = [['1m', '1 dk'], ['5m', '5 dk'], ['15m', '15 dk'], ['1H', '1 saat'], ['4H', '4 saat'], ['1D', '1 gün']];
 let pxc = null;
 function openChart(key) {
   pxc = { key, bar: store.get('chartBar') || '15m', kind: store.get('chartKind') || 'c', at: -1 };

@@ -200,7 +200,7 @@ def sparks(coins):
     return out
 
 
-CHART_BARS = (("5m", 60), ("15m", 120), ("1H", 300), ("4H", 900), ("1D", 1800))  # bar -> yenileme sn
+CHART_BARS = (("1m", 30), ("5m", 60), ("15m", 120), ("1H", 300), ("4H", 900), ("1D", 1800))  # bar -> yenileme sn
 _chart: dict[tuple, tuple] = {}
 
 
@@ -213,7 +213,11 @@ def charts(coins):
             at, d = _chart.get((c, bar), (0, None))
             if time.time() - at >= every or d is None:
                 try:
-                    raw = http(f"{KRIPTOBOT}/api/candles?inst={c}-USDT-SWAP&bar={bar}")["data"][-120:]
+                    if bar == "1m":  # KriptoBot 1m vermiyor: OKX'in herkese açık mum verisi (key gerekmez, yeni -> eski)
+                        raw = [[float(v) for v in x[:5]] for x in reversed(http(
+                            f"{OKX}/api/v5/market/candles?instId={c}-USDT-SWAP&bar=1m&limit=120")["data"])]
+                    else:
+                        raw = http(f"{KRIPTOBOT}/api/candles?inst={c}-USDT-SWAP&bar={bar}")["data"][-120:]
                     d = [[int(x[0] // 1000)] + [round(v, 6) for v in x[1:5]] for x in raw]
                     _chart[(c, bar)] = (time.time(), d)
                     changed = True
