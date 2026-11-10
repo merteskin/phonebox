@@ -187,7 +187,7 @@ const METRICS = {
     sub: (s) => (s.pc?.cpuTemp != null ? `${Math.round(s.pc.cpuTemp)}°C` : shortCpu(s.pc?.cpuName)), title: (s) => s.pc?.cpuName },
   gpu: { label: 'GPU', name: 'Graphics', color: '--gpu', unit: '%', max: () => 100, val: (s) => gpuOf(s)?.util,
     sub: (s) => { const g = gpuOf(s); if (!g) return 'No GPU data'; const n = shortGpu(g.name);
-      return g.temp != null ? `${n} · ${Math.round(g.temp)}°C` : n; }, title: (s) => gpuOf(s)?.name },
+      return [n, g.temp != null ? `${Math.round(g.temp)}°C` : null, g.power != null ? `${Math.round(g.power)} W` : null].filter(Boolean).join(' · '); }, title: (s) => gpuOf(s)?.name },
   ram: { label: 'RAM', name: 'Memory', color: '--ram', unit: 'GB', max: (s) => s.pc?.ramTotalGb || 1, val: (s) => s.pc?.ramUsedGb, fmt: r1,
     pct: (s) => (s.pc ? (s.pc.ramUsedGb / s.pc.ramTotalGb) * 100 : null), sub: (s) => (s.pc ? `/ ${Math.round(s.pc.ramTotalGb)} GB` : '') },
   vram: { label: 'VRAM', name: 'Video memory', color: '--gpu', unit: '%', max: () => 100,
