@@ -823,85 +823,89 @@ W.media = {
     const wave = q('.m-wave');
     const progress = q('.fill'), position = q('.m-pos');
     const g = wave.getContext('2d');
-    const levels = new Float32Array(56);
+    let levels = new Float32Array(0);
     let artKey = '', artAttempt = 0, nextArtTry = 0, volTimer = 0;
     let waveColor = DEFAULT_AMBIENT;
     let ink, glow, paintColor, wasMoving, lastWavePaint = -Infinity, lastProgress = -Infinity, lastPosition = -1;
-    let waveWidth = 0, waveHeight = 0;
+    let waveWidth = 0, waveHeight = 0, waveGain = 1;
     const waveSize = new ResizeObserver(([entry]) => {
-      waveWidth = Math.min(420, Math.round(entry.contentRect.width));
+      waveWidth = Math.round(entry.contentRect.width);
       waveHeight = Math.round(entry.contentRect.height);
       requestPanelFrame();
     });
     waveSize.observe(wave);
+    // Mirrored pill bars that flow outward from the centre: the middle bar is "now", bars further out are
+    // older. Bars are tinted with the cover colour, brightest in the middle, and fade out towards both edges.
     const paintWave = now => {
       const latest = waveSamples.at(-1);
       const moving = !!(media?.playing && media.app === 'Spotify' && latest && now - latest.at < 350);
-      const w = waveWidth, ht = waveHeight;
+      const dpr = Math.min(2, window.devicePixelRatio || 1);
+      const w = Math.round(waveWidth * dpr), ht = Math.round(waveHeight * dpr);
       if (!w || !ht) return false;
       const resized = wave.width !== w || wave.height !== ht;
-      if (moving && wasMoving && !resized && paintColor === waveColor && now - lastWavePaint < 47) return true;
+      if (moving && wasMoving && !resized && paintColor === waveColor && now - lastWavePaint < 33) return true;
       lastWavePaint = now;
       if (resized) { wave.width = w; wave.height = ht; }
       if (resized || paintColor !== waveColor) {
         paintColor = waveColor;
+        const light = waveColor.split(',').map((v) => Math.round((+v + 255 * 1.5) / 2.5)).join(',');
         ink = g.createLinearGradient(0, 0, w, 0);
-        ink.addColorStop(0, 'rgba(255,255,255,.06)');
-        ink.addColorStop(.65, `rgba(${waveColor},.56)`);
-        ink.addColorStop(1, 'rgba(255,255,255,.8)');
-        glow = g.createLinearGradient(0, 0, w, 0);
-        glow.addColorStop(0, 'transparent');
-        glow.addColorStop(1, `rgba(${waveColor},.32)`);
+        ink.addColorStop(0, `rgba(${waveColor},0)`);
+        ink.addColorStop(.2, `rgba(${waveColor},.45)`);
+        ink.addColorStop(.42, `rgba(${waveColor},.95)`);
+        ink.addColorStop(.5, `rgba(${light},1)`);
+        ink.addColorStop(.58, `rgba(${waveColor},.95)`);
+        ink.addColorStop(.8, `rgba(${waveColor},.45)`);
+        ink.addColorStop(1, `rgba(${waveColor},0)`);
+        glow = `rgba(${waveColor},.55)`;
       } else if (!moving && wasMoving === false) {
         return false;
       }
       wasMoving = moving;
       g.clearRect(0, 0, w, ht);
-      const center = ht / 2;
-      g.strokeStyle = ink;
-      g.lineWidth = 1.2;
-      g.lineJoin = 'round';
-      if (!moving) {
-        g.beginPath();
-        g.moveTo(0, center);
-        g.lineTo(w, center);
-        g.stroke();
-        return false;
+      const center = ht / 2, mid = w / 2;
+      const barW = Math.max(2, Math.round(3.5 * dpr)), pitch = barW + Math.round(4 * dpr);
+      const half = Math.max(1, Math.floor((mid - barW) / pitch));
+      if (levels.length !== half + 1) levels = new Float32Array(half + 1);
+      if (moving) {
+        // Bar k shows the level k steps back in time. The short buffer absorbs network jitter.
+        const span = WAVE_WINDOW_MS / half;
+        // Auto gain: quiet tracks or a low Spotify volume would otherwise leave the bars as flat dots.
+        let peak = 0;
+        for (const p of waveSamples) peak = Math.max(peak, p.level);
+        waveGain += (.9 / Math.max(.04, peak) - waveGain) * .08;
+        let s = waveSamples.length - 1;
+        for (let k = 0; k <= half; k++) {
+          const at = now - WAVE_BUFFER_MS - k * span;
+          while (s > 0 && waveSamples[s].at > at) s--;
+          const a = waveSamples[s], b = waveSamples[s + 1];
+          if (at < a.at) levels[k] = 0;
+          else if (!b) levels[k] = a.level;
+          else levels[k] = a.level + (b.level - a.level) * (at - a.at) / (b.at - a.at);
+          levels[k] = Math.min(1, levels[k] * waveGain);
+        }
+      } else {
+        levels.fill(0);
       }
-      // Move the time window at display speed. The short buffer absorbs network jitter.
-      const start = now - WAVE_BUFFER_MS - WAVE_WINDOW_MS;
-      const interval = WAVE_WINDOW_MS / (levels.length - 1);
-      let sample = 0;
-      for (let i = 0; i < levels.length; i++) {
-        const at = start + interval * i;
-        while (sample + 1 < waveSamples.length && waveSamples[sample + 1].at <= at) sample++;
-        const a = waveSamples[sample], b = waveSamples[sample + 1];
-        if (at < a.at) levels[i] = 0;
-        else if (!b) levels[i] = a.level;
-        else levels[i] = a.level + (b.level - a.level) * (at - a.at) / (b.at - a.at);
-      }
-      const step = w / (levels.length - 1);
-      const edge = (side) => {
-        const y = i => center + side * (1 + levels[i] * ht * .37);
-        g.moveTo(0, y(0));
-        for (let i = 1; i < levels.length; i++) g.lineTo(i * step, y(i));
+      const bar = (x, h) => {
+        const y = center - h / 2;
+        if (g.roundRect) g.roundRect(x, y, barW, h, barW / 2);
+        else g.rect(x, y, barW, h);
       };
       g.beginPath();
-      edge(-1);
-      g.lineTo(w, center);
-      g.lineTo(0, center);
-      g.closePath();
-      edge(1);
-      g.lineTo(w, center);
-      g.lineTo(0, center);
-      g.closePath();
-      g.fillStyle = glow;
+      for (let k = 0; k <= half; k++) {
+        const taper = 1 - .3 * (k / half) ** 2; // older bars settle a little lower
+        const h = Math.max(barW, Math.pow(levels[k], .85) * taper * ht * .94);
+        bar(mid - barW / 2 - k * pitch, h);
+        if (k) bar(mid - barW / 2 + k * pitch, h);
+      }
+      g.fillStyle = ink;
+      g.shadowColor = glow;
+      g.shadowBlur = moving ? 10 * dpr : 0;
+      g.globalAlpha = moving ? 1 : .45;
       g.fill();
-      g.beginPath();
-      edge(-1);
-      edge(1);
-      g.stroke();
-      return true;
+      g.globalAlpha = 1;
+      return moving;
     };
     const clearCover = () => {
       img.classList.remove('on');
