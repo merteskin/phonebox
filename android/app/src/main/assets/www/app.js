@@ -178,6 +178,7 @@ function ringSvg(pct, elapsed) {
 
 // ---------------------------------------------------------------- metrics (stat, gauge, chart widgets)
 const shortCpu = (n) => (n || '').replace(/^(AMD|Intel\(R\))\s*/, '').split(' ').slice(0, 4).join(' ');
+const shortGpu = (n) => (n || 'GPU').replace(/^(NVIDIA|AMD|Intel\(R\))\s*/i, '').replace(/^(GeForce|Radeon)\s*/i, '').split(' ').slice(0, 4).join(' ');
 const gpuOf = (s) => s?.pc?.gpu;
 const netMax = () => Math.max(1, ...hist.down, ...hist.up) * 1.15;
 
@@ -185,7 +186,8 @@ const METRICS = {
   cpu: { label: 'CPU', name: 'Processor', color: '--cpu', unit: '%', max: () => 100, val: (s) => s.pc?.cpu,
     sub: (s) => (s.pc?.cpuTemp != null ? `${Math.round(s.pc.cpuTemp)}°C` : shortCpu(s.pc?.cpuName)), title: (s) => s.pc?.cpuName },
   gpu: { label: 'GPU', name: 'Graphics', color: '--gpu', unit: '%', max: () => 100, val: (s) => gpuOf(s)?.util,
-    sub: (s) => (gpuOf(s) ? `${Math.round(gpuOf(s).temp)}°C · ${Math.round(gpuOf(s).power)} W` : 'No GPU data'), title: (s) => gpuOf(s)?.name },
+    sub: (s) => { const g = gpuOf(s); if (!g) return 'No GPU data'; const n = shortGpu(g.name);
+      return g.temp != null ? `${n} · ${Math.round(g.temp)}°C` : n; }, title: (s) => gpuOf(s)?.name },
   ram: { label: 'RAM', name: 'Memory', color: '--ram', unit: 'GB', max: (s) => s.pc?.ramTotalGb || 1, val: (s) => s.pc?.ramUsedGb, fmt: r1,
     pct: (s) => (s.pc ? (s.pc.ramUsedGb / s.pc.ramTotalGb) * 100 : null), sub: (s) => (s.pc ? `/ ${Math.round(s.pc.ramTotalGb)} GB` : '') },
   vram: { label: 'VRAM', name: 'Video memory', color: '--gpu', unit: '%', max: () => 100,
