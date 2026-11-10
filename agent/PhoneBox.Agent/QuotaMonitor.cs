@@ -115,7 +115,7 @@ public sealed partial class QuotaMonitor(ILogger<QuotaMonitor> log) : Background
     private long _nextCliRefresh;
 
     /// <summary>
-    /// Lets the Claude Code CLI refresh its expired sign-in ("claude auth status" refreshes the OAuth token and
+    /// Lets the Claude Code CLI refresh its expired sign-in ("claude mcp list" refreshes the OAuth token and
     /// writes it back to ~/.claude/.credentials.json without a model request). Only while Claude (desktop app or
     /// CLI) is open on this PC, and at most every 10 minutes.
     /// </summary>
@@ -131,14 +131,15 @@ public sealed partial class QuotaMonitor(ILogger<QuotaMonitor> log) : Background
                 UseShellExecute = false, CreateNoWindow = true, RedirectStandardInput = true,
                 RedirectStandardOutput = true, RedirectStandardError = true, WorkingDirectory = AppPaths.NeutralCwd,
             };
-            start.ArgumentList.Add("auth");
-            start.ArgumentList.Add("status");
+            // "auth status" stopped refreshing the token (CLI 2.1.311 only reports it); "mcp list" still does.
+            start.ArgumentList.Add("mcp");
+            start.ArgumentList.Add("list");
             using var process = Process.Start(start);
             if (process is null) return false;
             process.StandardInput.Close();
             var drain = Task.WhenAll(process.StandardOutput.ReadToEndAsync(ct), process.StandardError.ReadToEndAsync(ct));
             using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
-            timeout.CancelAfter(TimeSpan.FromSeconds(30));
+            timeout.CancelAfter(TimeSpan.FromSeconds(60));
             try { await process.WaitForExitAsync(timeout.Token); }
             catch (OperationCanceledException) when (!ct.IsCancellationRequested)
             {
