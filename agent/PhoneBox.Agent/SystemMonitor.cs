@@ -102,7 +102,8 @@ public sealed class SystemMonitor(ILogger<SystemMonitor> log) : BackgroundServic
         }
     }
 
-    // CPU temperature: Windows from LibreHardwareMonitor's web server (port 8085), when it is running; Linux from hwmon.
+    // CPU temperature: Windows from LibreHardwareMonitor's web server (port 8085) when it is running, otherwise the
+    // ACPI thermal zone; Linux from hwmon.
     private async Task CpuTempLoop(CancellationToken ct)
     {
 #if !WINDOWS
@@ -113,6 +114,7 @@ public sealed class SystemMonitor(ILogger<SystemMonitor> log) : BackgroundServic
         }
         return;
 #else
+        using var zone = new ThermalZone();
         string[] names = ["Core (Tctl/Tdie)", "Tctl/Tdie", "CPU Package", "Tdie", "Tctl", "Core (Tdie)"];
 #pragma warning disable CS0162
         while (!ct.IsCancellationRequested)
@@ -126,8 +128,17 @@ public sealed class SystemMonitor(ILogger<SystemMonitor> log) : BackgroundServic
             catch (OperationCanceledException) when (ct.IsCancellationRequested) { return; }
             catch
             {
-                _cpuTemp = null;
-                delay = TimeSpan.FromSeconds(30);
+                // No LibreHardwareMonitor: fall back to the ACPI thermal zone, and look for LHM again every 30 s.
+                try { _cpuTemp = zone.Read(); } catch { _cpuTemp = null; }
+                if (_cpuTemp is null) delay = TimeSpan.FromSeconds(30);
+                else
+                {
+                    for (var i = 0; i < 14 && !ct.IsCancellationRequested; i++)
+                    {
+                        await Task.Delay(delay, ct);
+                        try { _cpuTemp = zone.Read(); } catch { _cpuTemp = null; }
+                    }
+                }
             }
             await Task.Delay(delay, ct);
         }
