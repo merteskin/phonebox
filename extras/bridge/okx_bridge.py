@@ -118,6 +118,10 @@ def kriptobot():
             if c["s"] in ("BTC", "ETH", "TAO"):
                 push("px_" + c["s"].lower(), {"title": c["s"], "value": fmt(c["px"]), "sub": f'{c["ch"]:+.2f}% · 24s', "spark": c["spark"],
                                               "color": "#22c55e" if c["ch"] >= 0 else "#ef4444"})
+        try:
+            charts([c for c in ("TAO", "BTC", "ETH") if any(x["s"] == c for x in board["coins"])])
+        except Exception as e:
+            print(time.strftime("%H:%M:%S"), "grafik hatası:", e)
         k = board["kpi"]
         if k.get("d7") is not None:
             push("realized", {"title": "Realized 7g", "value": f'{k["d7"]:+,.2f}', "unit": "USDT",
@@ -194,6 +198,31 @@ def sparks(coins):
             pass
     _spark.update(at=time.time(), data=out)
     return out
+
+
+CHART_BARS = (("5m", 60), ("15m", 120), ("1H", 300), ("4H", 900), ("1D", 1800))  # bar -> yenileme sn
+_chart: dict[tuple, tuple] = {}
+
+
+def charts(coins):
+    """Ana ekrandaki fiyat kutusuna dokununca açılan grafik için mum verisi (KriptoBot /api/candles, sadece GET).
+    Her coin için tek push: chart_<coin> = {"bars": {"5m": [[t,o,h,l,c],...], ...}}."""
+    for c in coins:
+        bars, changed = {}, False
+        for bar, every in CHART_BARS:
+            at, d = _chart.get((c, bar), (0, None))
+            if time.time() - at >= every or d is None:
+                try:
+                    raw = http(f"{KRIPTOBOT}/api/candles?inst={c}-USDT-SWAP&bar={bar}")["data"][-120:]
+                    d = [[int(x[0] // 1000)] + [round(v, 6) for v in x[1:5]] for x in raw]
+                    _chart[(c, bar)] = (time.time(), d)
+                    changed = True
+                except Exception:
+                    pass
+            if d:
+                bars[bar] = d
+        if changed and bars:
+            push("chart_" + c.lower(), {"title": c, "bars": bars}, ttl=3600)
 
 
 def kripto_board(s):

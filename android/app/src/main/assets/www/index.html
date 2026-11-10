@@ -29,6 +29,16 @@
   <div class="ps-list" id="psList"></div>
 </div>
 
+<div class="p-sheet" id="cSheet" hidden>
+  <div class="ps-head">
+    <div class="ps-title"><b id="csTitle"></b><small id="csSub"></small></div>
+    <div class="seg" id="csBars"></div>
+    <div class="seg" id="csKind"><button data-k="c" class="on">Mum</button><button data-k="l">Çizgi</button></div>
+    <button class="ps-btn" id="csClose" aria-label="Close">✕</button>
+  </div>
+  <canvas id="csCanvas"></canvas>
+</div>
+
 <div id="approval" hidden>
   <div class="ap-card">
     <div class="ap-head"><span class="ap-logo">✳</span><span id="apSource">Claude Code</span><span class="ap-sep">·</span><span id="apProject"></span><span class="ap-count" id="apCount"></span></div>

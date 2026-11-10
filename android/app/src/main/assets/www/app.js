@@ -1663,9 +1663,92 @@ W.push = {
       box.className = box.className.replace(/\bps-\w+/g, '') + ' ps-' + style;
       box.replaceChildren(title, body);
     };
+    if (/^px_/.test(key)) box.addEventListener('click', () => { haptic(); openChart(key.replace(/^px_/, 'chart_')); });
     return { update: render };
   },
 };
+
+// ---------------------------------------------------------------- price chart sheet (push key "chart_<coin>")
+const CH_BARS = [['5m', '5 dk'], ['15m', '15 dk'], ['1H', '1 saat'], ['4H', '4 saat'], ['1D', '1 gün']];
+let pxc = null;
+function openChart(key) {
+  pxc = { key, bar: store.get('chartBar') || '15m', kind: store.get('chartKind') || 'c', at: -1 };
+  $('csBars').replaceChildren(...CH_BARS.map(([b, l]) => {
+    const btn = h('button', b === pxc.bar ? 'on' : null, l);
+    btn.addEventListener('click', (e) => { e.stopPropagation(); haptic(); pxc.bar = b; store.set('chartBar', b); pxc.at = -1; paintChart(); });
+    return btn;
+  }));
+  $('cSheet').hidden = false;
+  paintChart();
+  pxc.timer = setInterval(paintChart, 5000);
+}
+function closeChart() { if (pxc) clearInterval(pxc.timer); pxc = null; $('cSheet').hidden = true; }
+$('csClose').addEventListener('click', () => { haptic(); closeChart(); });
+$('csKind').addEventListener('click', (e) => {
+  const k = e.target.dataset?.k; if (!k || !pxc) return;
+  haptic(); pxc.kind = k; store.set('chartKind', k); pxc.at = -1; paintChart();
+});
+function paintChart() {
+  if (!pxc) return;
+  const item = D.push[pxc.key];
+  const at = (item?.at || 0) + pxc.bar + pxc.kind;
+  if (at === pxc.at) return;
+  pxc.at = at;
+  [...$('csBars').children].forEach((b, i) => b.classList.toggle('on', CH_BARS[i][0] === pxc.bar));
+  [...$('csKind').children].forEach((b) => b.classList.toggle('on', b.dataset.k === pxc.kind));
+  const d = item?.data || {};
+  const a = (d.bars || {})[pxc.bar] || [];
+  $('csTitle').textContent = (d.title || pxc.key.slice(6).toUpperCase()) + ' / USDT';
+  const cv = $('csCanvas'), dpr = Math.min(window.devicePixelRatio || 1, 2);
+  const W = cv.clientWidth, H = cv.clientHeight;
+  cv.width = W * dpr; cv.height = H * dpr;
+  const g = cv.getContext('2d');
+  g.setTransform(dpr, 0, 0, dpr, 0, 0);
+  g.clearRect(0, 0, W, H);
+  if (a.length < 2) { $('csSub').textContent = 'Veri bekleniyor…'; return; }
+  const first = a[0][1], last = a[a.length - 1][4], ch = (last / first - 1) * 100;
+  const lab = CH_BARS.find((x) => x[0] === pxc.bar)[1];
+  $('csSub').textContent = `${last.toFixed(last < 1 ? 5 : last < 100 ? 3 : 2)}  ·  ${ch >= 0 ? '+' : '−'}${Math.abs(ch).toFixed(2)}%  ·  ${a.length} × ${lab}`;
+  let lo = Infinity, hi = -Infinity;
+  for (const x of a) { if (x[3] < lo) lo = x[3]; if (x[2] > hi) hi = x[2]; }
+  const pad = (hi - lo) * 0.06 || 1; lo -= pad; hi += pad;
+  const R = 70, B = 24, pw = W - R, ph = H - B;
+  const Y = (v) => (hi - v) / (hi - lo) * ph;
+  const step = pw / a.length;
+  g.font = '12px system-ui, sans-serif'; g.fillStyle = '#8b93a1'; g.strokeStyle = 'rgba(255,255,255,.07)'; g.lineWidth = 1;
+  const dec = hi < 1 ? 5 : hi < 100 ? 3 : 2;
+  for (let i = 0; i <= 4; i++) {
+    const v = lo + (hi - lo) * i / 4, y = Math.round(Y(v)) + .5;
+    g.beginPath(); g.moveTo(0, y); g.lineTo(pw, y); g.stroke();
+    g.fillText(v.toFixed(dec), pw + 6, y + 4);
+  }
+  const tf = pxc.bar === '1D' ? { day: '2-digit', month: '2-digit' } : pxc.bar === '4H' ? { day: '2-digit', hour: '2-digit' } : { hour: '2-digit', minute: '2-digit' };
+  for (let i = 0; i < a.length; i += Math.ceil(a.length / 6)) {
+    g.fillText(new Date(a[i][0] * 1000).toLocaleString('tr-TR', tf), i * step, H - 6);
+  }
+  if (pxc.kind === 'l') {
+    const col = ch >= 0 ? '#22c55e' : '#ef4444';
+    g.beginPath();
+    a.forEach((x, i) => { const px = i * step + step / 2, py = Y(x[4]); i ? g.lineTo(px, py) : g.moveTo(px, py); });
+    g.strokeStyle = col; g.lineWidth = 2; g.stroke();
+    g.lineTo((a.length - .5) * step, ph); g.lineTo(step / 2, ph); g.closePath();
+    g.globalAlpha = .12; g.fillStyle = col; g.fill(); g.globalAlpha = 1;
+  } else {
+    const bw = Math.max(1, step * .7);
+    for (let i = 0; i < a.length; i++) {
+      const [, o, hh, l, c] = a[i], x = i * step + step / 2;
+      g.strokeStyle = g.fillStyle = c >= o ? '#22c55e' : '#ef4444';
+      g.beginPath(); g.moveTo(Math.round(x) + .5, Y(hh)); g.lineTo(Math.round(x) + .5, Y(l)); g.stroke();
+      const y1 = Y(Math.max(o, c)), y2 = Y(Math.min(o, c));
+      g.fillRect(x - bw / 2, y1, bw, Math.max(1, y2 - y1));
+    }
+  }
+  const ly = Math.round(Y(last)) + .5;
+  g.setLineDash([4, 4]); g.strokeStyle = '#e5e7eb'; g.lineWidth = 1;
+  g.beginPath(); g.moveTo(0, ly); g.lineTo(pw, ly); g.stroke(); g.setLineDash([]);
+  g.fillStyle = '#e5e7eb'; g.fillRect(pw + 2, ly - 9, R - 4, 18);
+  g.fillStyle = '#0c0e12'; g.fillText(last.toFixed(dec), pw + 6, ly + 4);
+}
 
 // ---------------------------------------------------------------- kripto: KriptoBot/OKX dashboard (push key "kripto")
 const kf = (x, d) => {
