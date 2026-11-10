@@ -52,6 +52,9 @@ const D = { state: null, quotas: null, work: null, procs: null, push: {}, weathe
 
 const HIST = 90;
 const hist = { cpu: [], gpu: [], ram: [], vram: [], down: [], up: [], ping: [], gputemp: [], cputemp: [] };
+// Time of the last sample and the usual gap between samples, so charts can glide one step left between them.
+let histAt = 0, histGap = 1000;
+const histLag = (now = performance.now()) => (histAt ? Math.max(0, 1 - (now - histAt) / histGap) : 0);
 const pushHist = (k, v) => { const a = hist[k]; a.push(v ?? 0); if (a.length > HIST) a.shift(); };
 
 // ---------------------------------------------------------------- helpers
@@ -141,8 +144,10 @@ function chart(canvas, series, opts = {}) {
     const d = s.data;
     if (d.length < 2) continue;
     const max = s.max || 1;
-    const step = w / (HIST - 1);
-    const x0 = w - (d.length - 1) * step;
+    // one step wider than the canvas, so the oldest point can slide off the left edge while the newest slides in
+    const step = w / (HIST - 2);
+    const x0 = w - (d.length - 1) * step + (opts.lag || 0) * step;
+    const xEnd = x0 + (d.length - 1) * step;
     const y = (v) => hh - (Math.min(v, max) / max) * (hh - top);
     g.beginPath();
     g.moveTo(x0, y(d[0]));
@@ -151,7 +156,7 @@ function chart(canvas, series, opts = {}) {
     g.strokeStyle = s.color;
     g.lineJoin = 'round';
     g.stroke();
-    g.lineTo(w, hh);
+    g.lineTo(xEnd, hh);
     g.lineTo(x0, hh);
     g.closePath();
     const grad = g.createLinearGradient(0, 0, 0, hh);
@@ -177,7 +182,7 @@ function ringSvg(pct, elapsed) {
 }
 
 // ---------------------------------------------------------------- metrics (stat, gauge, chart widgets)
-const shortCpu = (n) => (n || '').replace(/^(AMD|Intel\(R\))\s*/, '').split(' ').slice(0, 4).join(' ');
+const shortCpu = (n) => (n || '').replace(/\((TM|R)\)/gi, '').replace(/\s+(CPU\s*)?@.*$/i, '').replace(/^(AMD|Intel)\s*/i, '').split(/\s+/).slice(0, 4).join(' ');
 const shortGpu = (n) => (n || 'GPU').replace(/^(NVIDIA|AMD|Intel\(R\))\s*/i, '').replace(/^(GeForce|Radeon)\s*/i, '').split(' ').slice(0, 4).join(' ');
 const gpuOf = (s) => s?.pc?.gpu;
 const netMax = () => Math.max(1, ...hist.down, ...hist.up) * 1.15;
@@ -211,12 +216,13 @@ function metricText(m, s, v = m.val(s)) {
   return [m.fmt ? m.fmt(v) : String(Math.round(v)), m.unit || ''];
 }
 
+const EASE_MS = 800;
 function metricMotion(metric, paint) {
-  let from, target, started, state, nextPaint = 0;
+  let from, target, started, state;
   const valueAt = now => {
     if (from == null || target == null) return target;
-    const t = Math.min(1, Math.max(0, (now - started) / 420));
-    return from + (target - from) * (1 - (1 - t) ** 2);
+    const t = Math.min(1, Math.max(0, (now - started) / EASE_MS));
+    return from + (target - from) * (1 - (1 - t) ** 3);
   };
   return {
     update(s) {
@@ -232,10 +238,8 @@ function metricMotion(metric, paint) {
     },
     frame(now) {
       if (!state || from === target) return false;
-      if (now < nextPaint && now - started < 420) return true;
-      nextPaint = now + 90;
       paint(...metricText(metric, state, valueAt(now)));
-      if (now - started >= 420 || from == null || target == null) from = target;
+      if (now - started >= EASE_MS || from == null || target == null) from = target;
       return from !== target;
     },
   };
@@ -1031,15 +1035,23 @@ W.stat = {
       if (val.textContent !== v) val.textContent = v;
       if (unit.textContent !== u) unit.textContent = u;
     });
+    const draw = (now) => {
+      const s = D.state;
+      if (s) chart(canvas, [{ data: hist[m.hist || o.metric] || hist.cpu, color: c, max: m.max(s) }], { lag: histLag(now) });
+    };
     return {
-      frame: motion.frame,
+      frame(now) {
+        const moving = motion.frame(now);
+        draw(now);
+        return moving || histLag(now) > 0;
+      },
       update() {
         const s = D.state;
         if (!s) return;
         motion.update(s);
         const detail = m.sub?.(s) || ' ';
         if (sub.textContent !== detail) sub.textContent = detail;
-        chart(canvas, [{ data: hist[m.hist || o.metric] || hist.cpu, color: c, max: m.max(s) }]);
+        draw(performance.now());
       },
     };
   },
@@ -1086,6 +1098,10 @@ W.chart = {
     const canvas = h('canvas');
     box.append(head, main, canvas);
     const chip = h('span', 'chip');
+    const draw = (now) => {
+      const s = D.state;
+      if (s) chart(canvas, keys.map((k) => ({ data: hist[METRICS[k].hist || k], color: color(METRICS[k].color), max: METRICS[k].max(s) })), { grid: true, lag: histLag(now) });
+    };
     const motions = keys.map(k => {
       const m = METRICS[k], value = h('b', null, '—');
       if (single) {
@@ -1108,7 +1124,8 @@ W.chart = {
       frame(now) {
         let moving = false;
         for (const motion of motions) if (motion.frame(now)) moving = true;
-        return moving;
+        draw(now);
+        return moving || histLag(now) > 0;
       },
       update() {
         const s = D.state;
@@ -1122,7 +1139,7 @@ W.chart = {
         } else {
           head.lastChild.textContent = isNet && s.ping ? `Ping ${s.ping.ms != null ? Math.round(s.ping.ms) + ' ms' : '—'} · loss ${s.ping.lossPct}%` : '';
         }
-        chart(canvas, keys.map((k) => ({ data: hist[METRICS[k].hist || k], color: color(METRICS[k].color), max: METRICS[k].max(s) })), { grid: true });
+        draw(performance.now());
       },
     };
   },
@@ -2681,6 +2698,9 @@ function applyState(s) {
   {
     const pc = s.pc;
     if (pc) {
+      const t = performance.now();
+      if (histAt) histGap = Math.min(3000, Math.max(250, histGap * 0.7 + (t - histAt) * 0.3));
+      histAt = t;
       pushHist('cpu', pc.cpu);
       pushHist('gpu', pc.gpu?.util);
       pushHist('ram', pc.ramUsedGb);
