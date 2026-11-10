@@ -203,11 +203,40 @@ const METRICS = {
     sub: (s) => (s.pc?.cpuTemp == null ? 'needs LibreHardwareMonitor' : shortCpu(s.pc?.cpuName)) },
 };
 
-function metricText(m, s) {
-  const v = m.val(s);
+function metricText(m, s, v = m.val(s)) {
   if (m.rate) return fmtRate(v);
   if (v == null) return ['—', m.unit || ''];
   return [m.fmt ? m.fmt(v) : String(Math.round(v)), m.unit || ''];
+}
+
+function metricMotion(metric, paint) {
+  let from, target, started, state, nextPaint = 0;
+  const valueAt = now => {
+    if (from == null || target == null) return target;
+    const t = Math.min(1, Math.max(0, (now - started) / 420));
+    return from + (target - from) * (1 - (1 - t) ** 2);
+  };
+  return {
+    update(s) {
+      const value = metric.val(s);
+      if (value !== target || !state) {
+        const now = performance.now();
+        from = state ? valueAt(now) : value;
+        target = value;
+        started = now;
+      }
+      state = s;
+      paint(...metricText(metric, s, valueAt(performance.now())));
+    },
+    frame(now) {
+      if (!state || from === target) return false;
+      if (now < nextPaint && now - started < 420) return true;
+      nextPaint = now + 90;
+      paint(...metricText(metric, state, valueAt(now)));
+      if (now - started >= 420 || from == null || target == null) from = target;
+      return from !== target;
+    },
+  };
 }
 
 // ---------------------------------------------------------------- weather (Open-Meteo, straight from the phone)
@@ -323,8 +352,9 @@ function keyButton(s) {
 
 // ---------------------------------------------------------------- media (shared state, any number of widgets)
 let media = null;          // last media state + the time it was received
-const WAVE_HISTORY = 40;
-let mediaWave = Array(WAVE_HISTORY).fill(0);
+const WAVE_WINDOW_MS = 3120;
+const WAVE_BUFFER_MS = 100;
+const waveSamples = [];
 let waveLevel = 0;
 let waveAverage = null;
 let volDragging = false;
@@ -354,7 +384,7 @@ function updateWave(levels) {
   if (!levels.length) {
     waveLevel = 0;
     waveAverage = null;
-    mediaWave = Array(WAVE_HISTORY).fill(0);
+    waveSamples.length = 0;
   } else {
     const rms = Math.sqrt(levels.reduce((sum, value) => sum + value * value, 0) / levels.length) / 100;
     // Emphasize short changes around the track's recent loudness, even on heavily compressed tracks.
@@ -362,9 +392,11 @@ function updateWave(levels) {
     waveAverage += (rms - waveAverage) * .06;
     const target = Math.max(0, Math.min(1, rms * .64 + (rms - waveAverage) * 2.2));
     waveLevel += (target - waveLevel) * (target > waveLevel ? .82 : .48);
-    mediaWave = [...mediaWave.slice(1), waveLevel];
+    const now = performance.now();
+    waveSamples.push({ at: now, level: waveLevel });
+    while (waveSamples.length > 64 || now - waveSamples[0].at > WAVE_WINDOW_MS + 500) waveSamples.shift();
   }
-  if (!nightOn) emit('wave');
+  requestPanelFrame();
 }
 
 const MEDIA_HTML = `
@@ -783,37 +815,70 @@ W.forecast = {
 };
 
 W.media = {
-  needs: ['state', 'fast', 'wave'],
+  needs: ['state'],
   create(box) {
     box.innerHTML = MEDIA_HTML;
     const q = (s) => box.querySelector(s);
     const img = q('.art'), vol = q('.volr');
     const wave = q('.m-wave');
+    const progress = q('.fill'), position = q('.m-pos');
+    const g = wave.getContext('2d');
+    const levels = new Float32Array(56);
     let artKey = '', artAttempt = 0, nextArtTry = 0, volTimer = 0;
     let waveColor = DEFAULT_AMBIENT;
-    let drawnWave;
-    const paintWave = () => {
-      const levels = media?.playing && media.app === 'Spotify' ? mediaWave : null;
-      if (levels === drawnWave || !wave.clientWidth || !wave.clientHeight) return;
-      drawnWave = levels;
-      const g = wave.getContext('2d');
-      const w = wave.clientWidth, ht = wave.clientHeight;
-      if (wave.width !== w || wave.height !== ht) { wave.width = w; wave.height = ht; }
+    let ink, glow, paintColor, wasMoving, lastWavePaint = -Infinity, lastProgress = -Infinity, lastPosition = -1;
+    let waveWidth = 0, waveHeight = 0;
+    const waveSize = new ResizeObserver(([entry]) => {
+      waveWidth = Math.min(420, Math.round(entry.contentRect.width));
+      waveHeight = Math.round(entry.contentRect.height);
+      requestPanelFrame();
+    });
+    waveSize.observe(wave);
+    const paintWave = now => {
+      const latest = waveSamples.at(-1);
+      const moving = !!(media?.playing && media.app === 'Spotify' && latest && now - latest.at < 350);
+      const w = waveWidth, ht = waveHeight;
+      if (!w || !ht) return false;
+      const resized = wave.width !== w || wave.height !== ht;
+      if (moving && wasMoving && !resized && paintColor === waveColor && now - lastWavePaint < 47) return true;
+      lastWavePaint = now;
+      if (resized) { wave.width = w; wave.height = ht; }
+      if (resized || paintColor !== waveColor) {
+        paintColor = waveColor;
+        ink = g.createLinearGradient(0, 0, w, 0);
+        ink.addColorStop(0, 'rgba(255,255,255,.06)');
+        ink.addColorStop(.65, `rgba(${waveColor},.56)`);
+        ink.addColorStop(1, 'rgba(255,255,255,.8)');
+        glow = g.createLinearGradient(0, 0, w, 0);
+        glow.addColorStop(0, 'transparent');
+        glow.addColorStop(1, `rgba(${waveColor},.32)`);
+      } else if (!moving && wasMoving === false) {
+        return false;
+      }
+      wasMoving = moving;
       g.clearRect(0, 0, w, ht);
       const center = ht / 2;
-      const ink = g.createLinearGradient(0, 0, w, 0);
-      ink.addColorStop(0, 'rgba(255,255,255,.06)');
-      ink.addColorStop(.65, `rgba(${waveColor},.56)`);
-      ink.addColorStop(1, 'rgba(255,255,255,.8)');
       g.strokeStyle = ink;
       g.lineWidth = 1.2;
       g.lineJoin = 'round';
-      if (!levels) {
+      if (!moving) {
         g.beginPath();
         g.moveTo(0, center);
         g.lineTo(w, center);
         g.stroke();
-        return;
+        return false;
+      }
+      // Move the time window at display speed. The short buffer absorbs network jitter.
+      const start = now - WAVE_BUFFER_MS - WAVE_WINDOW_MS;
+      const interval = WAVE_WINDOW_MS / (levels.length - 1);
+      let sample = 0;
+      for (let i = 0; i < levels.length; i++) {
+        const at = start + interval * i;
+        while (sample + 1 < waveSamples.length && waveSamples[sample + 1].at <= at) sample++;
+        const a = waveSamples[sample], b = waveSamples[sample + 1];
+        if (at < a.at) levels[i] = 0;
+        else if (!b) levels[i] = a.level;
+        else levels[i] = a.level + (b.level - a.level) * (at - a.at) / (b.at - a.at);
       }
       const step = w / (levels.length - 1);
       const edge = (side) => {
@@ -821,9 +886,6 @@ W.media = {
         g.moveTo(0, y(0));
         for (let i = 1; i < levels.length; i++) g.lineTo(i * step, y(i));
       };
-      const glow = g.createLinearGradient(0, 0, w, 0);
-      glow.addColorStop(0, 'transparent');
-      glow.addColorStop(1, `rgba(${waveColor},.32)`);
       g.beginPath();
       edge(-1);
       g.lineTo(w, center);
@@ -839,13 +901,14 @@ W.media = {
       edge(-1);
       edge(1);
       g.stroke();
+      return true;
     };
     const clearCover = () => {
       img.classList.remove('on');
       img.removeAttribute('src');
       box.style.removeProperty('--media-cover');
       waveColor = DEFAULT_AMBIENT;
-      drawnWave = undefined;
+      requestPanelFrame();
       setAmbient(null);
     };
     img.addEventListener('load', () => {
@@ -856,7 +919,7 @@ W.media = {
       if (art) {
         waveColor = art.rgb;
         box.style.setProperty('--media-cover', `url("${art.backdrop}")`);
-        drawnWave = undefined;
+        requestPanelFrame();
         setAmbient(art.rgb);
       }
     });
@@ -871,6 +934,7 @@ W.media = {
         media.playing = !media.playing; // optimistic update
         media.at = performance.now();
         box.classList.toggle('playing', media.playing);
+        requestPanelFrame();
       }
       try { await api('/media/' + action, 'POST'); } catch (_) {}
     }));
@@ -880,6 +944,7 @@ W.media = {
       const ms = Math.round(((e.clientX - r.left) / r.width) * media.durMs);
       haptic();
       media.posMs = ms; media.at = performance.now();
+      requestPanelFrame();
       try { await api('/media/seek?ms=' + ms, 'POST'); } catch (_) {}
     });
     const paintVol = (v) => { vol.style.setProperty('--p', v + '%'); q('.vol-val').textContent = v; };
@@ -896,16 +961,20 @@ W.media = {
     });
 
     return {
-      update(kind) {
-        if (kind === 'wave') { paintWave(); return; }
-        if (kind === 'fast') {
-          if (!media || !(media.durMs > 0)) return;
-          const pos = Math.min(media.durMs, media.posMs + (media.playing ? performance.now() - media.at : 0));
-          q('.fill').style.width = (pos / media.durMs) * 100 + '%';
-          q('.m-pos').textContent = fmtTime(pos);
-          return;
+      destroy() { waveSize.disconnect(); },
+      frame(now) {
+        const moving = paintWave(now);
+        if (media?.durMs > 0 && (!media.playing || now - lastProgress >= 100)) {
+          lastProgress = now;
+          const pos = Math.min(media.durMs, Math.max(0, media.posMs + (media.playing ? now - media.at : 0)));
+          progress.style.width = (pos / media.durMs) * 100 + '%';
+          const second = Math.floor(pos / 1000);
+          if (second !== lastPosition) { lastPosition = second; position.textContent = fmtTime(pos); }
         }
-        paintWave();
+        return moving || !!(media?.playing && media.durMs > 0);
+      },
+      update() {
+        lastProgress = -Infinity;
         const m = D.state?.media, a = D.state?.audio;
         if (a) {
           box.classList.toggle('muted-on', !!a.muted);
@@ -917,8 +986,9 @@ W.media = {
           q('.m-app').textContent = 'Media';
           q('.m-title').textContent = 'Nothing playing';
           q('.m-artist').textContent = 'Press ▶ to resume';
-          q('.fill').style.width = '0';
-          q('.m-pos').textContent = q('.m-dur').textContent = '0:00';
+          progress.style.width = '0';
+          lastPosition = -1;
+          position.textContent = q('.m-dur').textContent = '0:00';
           if (artKey) { artKey = ''; clearCover(); }
           return;
         }
@@ -951,14 +1021,18 @@ W.stat = {
     const canvas = h('canvas');
     const val = h('b', null, '—'), unit = h('small'), sub = h('div', 't-sub', ' ');
     box.append(canvas, h('div', 't-label', m.label), h('div', 't-val', val, unit), sub);
+    const motion = metricMotion(m, (v, u) => {
+      if (val.textContent !== v) val.textContent = v;
+      if (unit.textContent !== u) unit.textContent = u;
+    });
     return {
+      frame: motion.frame,
       update() {
         const s = D.state;
         if (!s) return;
-        const [v, u] = metricText(m, s);
-        val.textContent = v;
-        unit.textContent = u;
-        sub.textContent = m.sub?.(s) || ' ';
+        motion.update(s);
+        const detail = m.sub?.(s) || ' ';
+        if (sub.textContent !== detail) sub.textContent = detail;
         chart(canvas, [{ data: hist[m.hist || o.metric] || hist.cpu, color: c, max: m.max(s) }]);
       },
     };
@@ -1005,22 +1079,41 @@ W.chart = {
     const main = h('div', 's-main');
     const canvas = h('canvas');
     box.append(head, main, canvas);
+    const chip = h('span', 'chip');
+    const motions = keys.map(k => {
+      const m = METRICS[k], value = h('b', null, '—');
+      if (single) {
+        const unit = h('small');
+        main.append(value, unit, h('span', 'chips', chip));
+        return metricMotion(m, (v, u) => {
+          if (value.textContent !== v) value.textContent = v;
+          if (unit.textContent !== u) unit.textContent = u;
+        });
+      }
+      const entry = h('span', 'multi', k === 'down' ? '↓ ' : k === 'up' ? '↑ ' : m.label + ' ', value);
+      entry.style.color = color(m.color);
+      main.append(entry);
+      return metricMotion(m, (v, u) => {
+        const text = v + ' ' + u;
+        if (value.textContent !== text) value.textContent = text;
+      });
+    });
     return {
+      frame(now) {
+        let moving = false;
+        for (const motion of motions) if (motion.frame(now)) moving = true;
+        return moving;
+      },
       update() {
         const s = D.state;
         if (!s) return;
+        for (const motion of motions) motion.update(s);
         if (single) {
-          const [v, u] = metricText(single, s);
-          main.replaceChildren(h('b', null, v), h('small', null, u), h('span', 'chips', single.sub?.(s) ? h('span', 'chip', single.sub(s)) : ''));
+          const detail = single.sub?.(s) || '';
+          chip.hidden = !detail;
+          if (chip.textContent !== detail) chip.textContent = detail;
           head.lastChild.textContent = single.title?.(s) || '';
         } else {
-          main.replaceChildren(...keys.map((k) => {
-            const mm = METRICS[k];
-            const [v, u] = metricText(mm, s);
-            const e = h('span', 'multi', (k === 'down' ? '↓ ' : k === 'up' ? '↑ ' : mm.label + ' '), h('b', null, v + ' ' + u));
-            e.style.color = color(mm.color);
-            return e;
-          }));
           head.lastChild.textContent = isNet && s.ping ? `Ping ${s.ping.ms != null ? Math.round(s.ping.ms) + ' ms' : '—'} · loss ${s.ping.lossPct}%` : '';
         }
         chart(canvas, keys.map((k) => ({ data: hist[METRICS[k].hist || k], color: color(METRICS[k].color), max: METRICS[k].max(s) })), { grid: true });
@@ -2236,6 +2329,10 @@ function buildLayout() {
       const def = W[w.type];
       if (!def) continue;
       const box = h('div', `w w-${w.type}${def.bare ? ' bare' : ' card'}`);
+      if (p.id === 'home' && w.type === 'shortcuts' && w.x === 0 && w.y === 5 && w.w === 12 && w.h === 1) {
+        grid.classList.add('grid-with-launcher');
+        box.classList.add('w-shortcuts-footer');
+      }
       box.style.gridArea = `${w.y + 1} / ${w.x + 1} / span ${w.h} / span ${w.w}`;
       grid.appendChild(box);
       const ctx = { page: p, w, o: w.options || {}, box };
@@ -2269,6 +2366,7 @@ function emit(kind) {
     if (!m.def.needs.includes(kind)) continue;
     if (act.has(m.pi)) runUpdate(m, kind); else m.dirty = true;
   }
+  if (kind === 'state') requestPanelFrame();
 }
 
 function setActive(all = false) {
@@ -2279,7 +2377,27 @@ function setActive(all = false) {
       for (const k of m.def.needs) runUpdate(m, k);
     }
   }
+  requestPanelFrame();
 }
+
+let panelFrame = 0, lastPanelFrame = -Infinity;
+function requestPanelFrame() {
+  if (!panelFrame && !nightOn && !document.hidden) panelFrame = requestAnimationFrame(animatePanel);
+}
+
+function animatePanel(now) {
+  panelFrame = 0;
+  if (nightOn || document.hidden) return;
+  if (now - lastPanelFrame < 31) { requestPanelFrame(); return; }
+  lastPanelFrame = now;
+  let moving = false;
+  for (const m of mounted) {
+    if (m.pi === curPage && m.inst.frame?.(now)) moving = true;
+  }
+  if (moving) requestPanelFrame();
+}
+document.addEventListener('visibilitychange', requestPanelFrame);
+window.addEventListener('resize', requestPanelFrame);
 
 // ---------------------------------------------------------------- navigation: swipe, dots, overview, volume keys, agent events
 function buildDots() {
@@ -2421,6 +2539,7 @@ function setNight(on) {
   nightOn = on;
   document.body.classList.toggle('night', on);
   applyBrightness(true);
+  if (!on) requestPanelFrame();
 }
 
 // ---------------------------------------------------------------- phone sensors
@@ -2566,7 +2685,7 @@ let streamOn = false;
 let lastStateAt = 0;
 window.onAgentStream = (event, data) => {
   if (event === 'open') { streamOn = true; return; }
-  if (event === 'close') { streamOn = false; updateWave([]); return; }
+  if (event === 'close') { streamOn = false; return; }
   let d;
   try { d = JSON.parse(data); } catch (_) { return; }
   if (event === 'state') applyState(d);
@@ -2578,7 +2697,10 @@ const streaming = () => streamOn && Date.now() - lastStateAt < 3000;
 
 async function poll() {
   if (!streaming()) {
-    try { applyState(await api('/state' + (evSeq != null ? '?ev=' + evSeq : ''))); }
+    try {
+      const state = await api('/state' + (evSeq != null ? '?ev=' + evSeq : ''));
+      if (!streaming()) applyState(state);
+    }
     catch (_) { if (!streaming()) setOnline(false); }
   }
   setTimeout(poll, 1000);

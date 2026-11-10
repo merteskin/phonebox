@@ -52,6 +52,11 @@ class AgentLink(context: Context) {
         return null
     }
 
+    /** Check for an authenticated USB tunnel without interrupting the current Wi-Fi stream. */
+    fun hasUsb(): Boolean = usb("GET", "/api/state", 400)?.let { reply ->
+        reply.body.use { reply.code == 200 }
+    } ?: false
+
     /** Forwards a request (method + path with query) to the agent over the best available route. */
     fun request(method: String, pathAndQuery: String): Reply {
         usb(method, pathAndQuery)?.let {
