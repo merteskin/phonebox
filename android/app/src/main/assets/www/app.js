@@ -53,8 +53,17 @@ const D = { state: null, quotas: null, work: null, procs: null, push: {}, weathe
 const HIST = 90;
 const hist = { cpu: [], gpu: [], ram: [], vram: [], down: [], up: [], ping: [], gputemp: [], cputemp: [] };
 // Time of the last sample and the usual gap between samples, so charts can glide one step left between them.
-let histAt = 0, histGap = 1000;
-const histLag = (now = performance.now()) => (histAt ? Math.max(0, 1 - (now - histAt) / histGap) : 0);
+// histOff is how many steps the charts still have to scroll. Every sample adds one and it drains at a steady
+// speed (gently corrected towards one step of reserve), so the charts never stop and wait for the next sample.
+let histAt = 0, histGap = 1000, histOff = 0, histOffAt = 0;
+const histLag = (now = performance.now()) => {
+  const dt = now - histOffAt;
+  if (dt <= 0) return histOff;
+  histOffAt = now;
+  if (!histAt || dt > 2000) { histOff = Math.min(histOff, 1); return histOff; }
+  histOff = Math.max(-1, histOff - (dt * Math.max(0.2, 1 + 0.3 * (histOff - 1))) / histGap);
+  return histOff;
+};
 const pushHist = (k, v) => { const a = hist[k]; a.push(v ?? 0); if (a.length > HIST) a.shift(); };
 
 // ---------------------------------------------------------------- helpers
@@ -144,19 +153,20 @@ function chart(canvas, series, opts = {}) {
     const d = s.data;
     if (d.length < 2) continue;
     const max = s.max || 1;
-    // one step wider than the canvas, so the oldest point can slide off the left edge while the newest slides in
-    const step = w / (HIST - 2);
+    // two steps wider than the canvas, so points slide in from beyond the right edge and out past the left one
+    const step = w / (HIST - 3);
     const x0 = w - (d.length - 1) * step + (opts.lag || 0) * step;
     const xEnd = x0 + (d.length - 1) * step;
     const y = (v) => hh - (Math.min(v, max) / max) * (hh - top);
     g.beginPath();
     g.moveTo(x0, y(d[0]));
     for (let i = 1; i < d.length; i++) g.lineTo(x0 + i * step, y(d[i]));
+    if (xEnd < w) g.lineTo(w, y(d[d.length - 1])); // a late sample: hold the last value up to the edge
     g.lineWidth = 1.6 * dpr;
     g.strokeStyle = s.color;
     g.lineJoin = 'round';
     g.stroke();
-    g.lineTo(xEnd, hh);
+    g.lineTo(Math.max(xEnd, w), hh);
     g.lineTo(x0, hh);
     g.closePath();
     const grad = g.createLinearGradient(0, 0, 0, hh);
@@ -216,13 +226,12 @@ function metricText(m, s, v = m.val(s)) {
   return [m.fmt ? m.fmt(v) : String(Math.round(v)), m.unit || ''];
 }
 
-const EASE_MS = 800;
 function metricMotion(metric, paint) {
-  let from, target, started, state;
+  let from, target, started, state, dur = 1000;
   const valueAt = now => {
     if (from == null || target == null) return target;
-    const t = Math.min(1, Math.max(0, (now - started) / EASE_MS));
-    return from + (target - from) * (1 - (1 - t) ** 3);
+    const t = Math.min(1, Math.max(0, (now - started) / dur));
+    return from + (target - from) * t;
   };
   return {
     update(s) {
@@ -232,6 +241,7 @@ function metricMotion(metric, paint) {
         from = state ? valueAt(now) : value;
         target = value;
         started = now;
+        dur = histGap;
       }
       state = s;
       paint(...metricText(metric, s, valueAt(performance.now())));
@@ -239,7 +249,7 @@ function metricMotion(metric, paint) {
     frame(now) {
       if (!state || from === target) return false;
       paint(...metricText(metric, state, valueAt(now)));
-      if (now - started >= EASE_MS || from == null || target == null) from = target;
+      if (now - started >= dur || from == null || target == null) from = target;
       return from !== target;
     },
   };
@@ -1041,9 +1051,9 @@ W.stat = {
     };
     return {
       frame(now) {
-        const moving = motion.frame(now);
+        motion.frame(now);
         draw(now);
-        return moving || histLag(now) > 0;
+        return true;
       },
       update() {
         const s = D.state;
@@ -1122,10 +1132,9 @@ W.chart = {
     });
     return {
       frame(now) {
-        let moving = false;
-        for (const motion of motions) if (motion.frame(now)) moving = true;
+        for (const motion of motions) motion.frame(now);
         draw(now);
-        return moving || histLag(now) > 0;
+        return true;
       },
       update() {
         const s = D.state;
@@ -2700,6 +2709,8 @@ function applyState(s) {
     if (pc) {
       const t = performance.now();
       if (histAt) histGap = Math.min(3000, Math.max(250, histGap * 0.7 + (t - histAt) * 0.3));
+      histLag(t);
+      histOff = Math.min(2, histOff + 1);
       histAt = t;
       pushHist('cpu', pc.cpu);
       pushHist('gpu', pc.gpu?.util);
