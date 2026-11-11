@@ -785,3 +785,11 @@ body.night #night { display: flex; }
   .phone .grid, .phone .grid-with-launcher { grid-template-columns: repeat(4, minmax(0, 1fr)); }
   .phone .grid > .w { grid-column: span var(--c4, 2); }
 }
+
+/* Tablet browser held upright: same scrolling grid as the phone, 4 columns. Sideways it keeps the tablet layout. */
+@media (orientation: portrait) {
+  .tablet-web .page { height: 100dvh; overflow-y: auto; overscroll-behavior-y: contain; }
+  .tablet-web .grid, .tablet-web .grid-with-launcher { height: auto; min-height: 100%; grid-template-columns: repeat(4, minmax(0, 1fr)); grid-template-rows: none; grid-auto-rows: minmax(64px, 1fr); grid-auto-flow: row dense; }
+  .tablet-web .grid > .w { grid-area: auto / auto / span var(--r, 2) / span var(--c4, 2) !important; }
+}
+/* build 2 */
