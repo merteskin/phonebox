@@ -800,7 +800,7 @@ body.night #night { display: flex; }
 #aSheet .as-read b { font-size: 96px; line-height: 1; font-weight: 700; color: #2dd4bf; }
 #aSheet .as-read small { font-size: 14px; color: var(--muted); letter-spacing: .1em; }
 #aSheet .as-read span { font-size: 18px; color: var(--muted); margin-top: 8px; }
-#aSheet .as-power { width: 96px; height: 96px; border-radius: 50%; font-size: 40px; background: rgba(255, 255, 255, .08); color: var(--muted); }
+#aSheet .as-power { display: grid; place-items: center; width: 96px; height: 96px; border-radius: 50%; font-size: 40px; background: rgba(255, 255, 255, .08); color: var(--muted); }
 #aSheet .as-power.on { background: rgba(45, 212, 191, .22); color: #2dd4bf; box-shadow: 0 0 0 2px #2dd4bf; }
 #aSheet .as-modes button { font-size: 20px; padding: 14px 34px; }
 #aSheet .as-level { display: flex; align-items: center; gap: 28px; }
