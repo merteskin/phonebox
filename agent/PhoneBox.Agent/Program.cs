@@ -78,7 +78,9 @@ var app = builder.Build();
 // path the phone uses; on the local port that is simply /api/... Routing runs after this, so it sees the new path.
 app.Use((ctx, next) =>
 {
-    if (ctx.Connection.LocalPort == Port && ctx.Request.Path.StartsWithSegments("/agent/api", out var rest))
+    // The Wi-Fi port also serves the panel to a phone browser (iPhone over Tailscale), which uses the same paths.
+    if ((ctx.Connection.LocalPort == Port || (lanCert is not null && ctx.Connection.LocalPort == lanCfg.Port))
+        && ctx.Request.Path.StartsWithSegments("/agent/api", out var rest))
         ctx.Request.Path = "/api" + rest;
     return next(ctx);
 });
@@ -106,9 +108,17 @@ app.Use(async (ctx, next) =>
     {
         // The separate webhook key can submit values and notifications. Use headers to keep keys out of URLs.
         var lan = configStore.Get().Lan;
+        // A phone browser (no app) signs in once at /login and then carries the key in an HttpOnly cookie.
+        // Its own origin is the only one accepted; the panel files and the login page need no key.
+        var p = ctx.Request.Path;
+        var sameOrigin = origin == "" || origin == $"https://{ctx.Request.Host}";
+        var openPath = HttpMethods.IsGet(ctx.Request.Method)
+            && (p.StartsWithSegments("/panel") || p.StartsWithSegments("/login") || p.StartsWithSegments("/favicon.ico"));
+        var loginPost = HttpMethods.IsPost(ctx.Request.Method) && p.Equals("/login");
         var authorized = Lan.Matches(ctx.Request.Headers.Authorization, lan.Token!)
+            || Lan.CookieMatches(ctx.Request.Cookies[Lan.WebCookie], lan.Token!)
             || (Lan.IsWebhookWrite(ctx.Request) && Lan.Matches(ctx.Request.Headers.Authorization, lan.WebhookToken!));
-        if (origin != "" || !Lan.AllowedOverLan(ctx.Request.Path) || !authorized)
+        if (!sameOrigin || !(openPath || loginPost || (Lan.AllowedOverLan(p) && authorized)))
         {
             ctx.Response.StatusCode = StatusCodes.Status403Forbidden;
             return;
@@ -163,6 +173,55 @@ app.MapGet("/api/lan", (ConfigStore cfg) => Results.Json(new
     fingerprint = lanCert is null ? null : Lan.Fingerprint(lanCert),
     publicKeyPin = lanCert is null ? null : Lan.PublicKeyPin(lanCert),
 }));
+
+// ---------------------------------------------------------------- phone browser sign-in (Wi-Fi / Tailscale port only)
+// Opened as https://<pc>:<port>/login#<key> (the key stays in the fragment, so it never reaches logs or history
+// on the server side); the page posts it back once and the panel then runs on an HttpOnly cookie.
+const string LoginPage = """
+<!doctype html><html lang="tr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>PhoneBox</title><style>body{font:16px system-ui;background:#111;color:#eee;display:grid;place-items:center;min-height:90vh}
+form{display:grid;gap:12px;width:min(320px,90vw)}input,button{font:inherit;padding:12px;border-radius:10px;border:1px solid #444;background:#222;color:#eee}
+button{background:#2b6cff;border:0}p{color:#f88}</style></head><body>
+<form method="post" action="/login"><b>PhoneBox</b><input name="key" type="password" placeholder="Anahtar" autocomplete="off" required>
+<button>Giriş</button>__ERR__</form>
+<script>const k=decodeURIComponent(location.hash.slice(1));if(k){history.replaceState(null,'','/login');const f=document.forms[0];f.key.value=k;f.submit();}</script>
+</body></html>
+""";
+bool OnLanPort(HttpContext ctx) => lanCert is not null && ctx.Connection.LocalPort == lanCfg.Port;
+app.MapGet("/login", (HttpContext ctx) => OnLanPort(ctx)
+    ? Results.Content(LoginPage.Replace("__ERR__", ""), "text/html; charset=utf-8") : Results.NotFound());
+app.MapPost("/login", async (HttpContext ctx, ConfigStore cfg, ILogger<Program> log) =>
+{
+    if (!OnLanPort(ctx) || !ctx.Request.HasFormContentType) return Results.NotFound();
+    var key = (await ctx.Request.ReadFormAsync())["key"].ToString().Trim();
+    if (!Lan.CookieMatches(key, cfg.Get().Lan.Token!))
+    {
+        log.LogWarning("phone browser sign-in rejected from {ip}", ctx.Connection.RemoteIpAddress);
+        await Task.Delay(1000);
+        return Results.Content(LoginPage.Replace("__ERR__", "<p>Anahtar yanlış.</p>"), "text/html; charset=utf-8", statusCode: 401);
+    }
+    ctx.Response.Cookies.Append(Lan.WebCookie, key, new CookieOptions
+    {
+        HttpOnly = true, Secure = true, SameSite = SameSiteMode.Strict, Path = "/", MaxAge = TimeSpan.FromDays(365),
+    });
+    log.LogInformation("phone browser signed in from {ip}", ctx.Connection.RemoteIpAddress);
+    return Results.Redirect("/panel/", false);
+});
+
+// Local-only page (the 127.0.0.1 port) with a QR code that signs a phone browser in over Tailscale.
+app.MapGet("/iphone", (HttpContext ctx, ConfigStore cfg) =>
+{
+    if (ctx.Connection.LocalPort != Port || lanCert is null) return Results.NotFound();
+    var host = Lan.Addresses().FirstOrDefault(a => a.StartsWith("100.")) ?? Lan.Addresses().FirstOrDefault() ?? "127.0.0.1";
+    var url = $"https://{host}:{lanCfg.Port}/login#{cfg.Get().Lan.Token}";
+    return Results.Content($$"""
+<!doctype html><meta charset="utf-8"><title>PhoneBox iPhone</title>
+<body style="font:18px system-ui;text-align:center;padding:30px"><h2>iPhone kamerasıyla okut</h2>
+<div id="q" style="display:inline-block;padding:16px;background:#fff"></div><p>{{host}}:{{lanCfg.Port}}</p>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+<script>new QRCode(document.getElementById("q"), { text: {{JsonSerializer.Serialize(url)}}, width: 320, height: 320 });</script>
+""", "text/html; charset=utf-8");
+});
 
 app.MapGet("/api/update", (UpdateService upd, ConfigStore cfg) => Results.Json(new { status = upd.Status(), auto = cfg.Get().Updates.Auto, installed = UpdateService.RunningInstalled }));
 app.MapPost("/api/update/check", async (UpdateService upd) => { await upd.CheckAsync(); return Results.Json(upd.Status()); });

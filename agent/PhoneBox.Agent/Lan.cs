@@ -73,6 +73,12 @@ public static class Lan
         return CryptographicOperations.FixedTimeEquals(given, expected);
     }
 
+    public const string WebCookie = "pb_web";
+
+    public static bool CookieMatches(string? cookie, string token) =>
+        !string.IsNullOrEmpty(cookie) && CryptographicOperations.FixedTimeEquals(
+            System.Text.Encoding.UTF8.GetBytes(cookie), System.Text.Encoding.UTF8.GetBytes(token));
+
     public static bool IsWebhookWrite(HttpRequest req)
     {
         if (HttpMethods.IsPost(req.Method) && string.Equals(req.Path.Value, "/api/notify", StringComparison.OrdinalIgnoreCase))
