@@ -39,6 +39,19 @@
   <canvas id="csCanvas"></canvas>
 </div>
 
+<div class="p-sheet" id="aSheet" hidden>
+  <div class="ps-head">
+    <div class="ps-title"><b>Hava Temizleyici</b><small id="asSub"></small></div>
+    <button class="ps-btn" id="asClose" aria-label="Close">✕</button>
+  </div>
+  <div class="as-body">
+    <div class="as-read"><b id="asPm">—</b><small>PM2.5</small><span id="asInfo"></span></div>
+    <button class="as-power" id="asPower">⏻</button>
+    <div class="seg as-modes" id="asModes"><button data-m="auto">Oto</button><button data-m="silent">Uyku</button><button data-m="favorite">Favori</button></div>
+    <div class="as-level"><button id="asMinus">−</button><span><b id="asLvl">—</b><small>Favori seviye</small></span><button id="asPlus">+</button></div>
+  </div>
+</div>
+
 <div id="approval" hidden>
   <div class="ap-card">
     <div class="ap-head"><span class="ap-logo">✳</span><span id="apSource">Claude Code</span><span class="ap-sep">·</span><span id="apProject"></span><span class="ap-count" id="apCount"></span></div>

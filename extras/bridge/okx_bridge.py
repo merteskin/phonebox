@@ -371,20 +371,36 @@ def kripto_board(s):
 
 
 def air_loop():
-    """Hava temizleyici (miio_air.py + air.json) varsa 15 sn'de bir "air" push'lar."""
+    """Hava temizleyici (miio_air.py + air.json) varsa 15 sn'de bir "air" push'lar.
+    Panel popup'ı komutu "air_cmd" push'u olarak bırakır ({"cmd": "auto", "at": ms}); her saniye bakılır."""
     try:
         import miio_air
     except ImportError:
         return
+    last_read, done, first = 0.0, None, True
     while True:
         try:
-            a = miio_air.read()
-            if a is None:
-                return  # air.json ya da pycryptodome yok
-            push("air", a, ttl=120)
+            c = http(f"{AGENT}/api/push/air_cmd")
+            at = (c or {}).get("at")
+            if first:
+                done = at  # açılışta eski komutu tekrar çalıştırma
+            elif at and at != done:
+                done = at
+                miio_air.command(str((c.get("data") or {}).get("cmd") or "status").split())
+                last_read = 0
         except Exception:
-            pass  # cihaz o an cevap vermedi; push süresi dolunca kutu boşalır
-        time.sleep(15)
+            pass  # komut yok (404) ya da cihaz o an cevap vermedi
+        first = False
+        if time.time() - last_read >= 15:
+            last_read = time.time()
+            try:
+                a = miio_air.read()
+                if a is None:
+                    return  # air.json ya da pycryptodome yok
+                push("air", a, ttl=120)
+            except Exception:
+                pass  # push süresi dolunca kutu boşalır
+        time.sleep(1)
 
 
 if __name__ == "__main__":

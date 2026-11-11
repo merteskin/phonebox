@@ -1057,6 +1057,7 @@ W.stat = {
     const canvas = h('canvas');
     const val = h('b', null, '—'), unit = h('small'), sub = h('div', 't-sub', ' ');
     box.append(canvas, h('div', 't-label', m.label), h('div', 't-val', val, unit), sub);
+    if (o.metric === 'air') box.addEventListener('click', () => { haptic(); openAir(); });
     const motion = metricMotion(m, (v, u) => {
       if (val.textContent !== v) val.textContent = v;
       if (unit.textContent !== u) unit.textContent = u;
@@ -1685,6 +1686,39 @@ W.push = {
     return { update: render };
   },
 };
+
+// ---------------------------------------------------------------- air purifier sheet (push "air" in, push "air_cmd" out)
+// The bridge (extras/bridge/okx_bridge.py + miio_air.py) polls "air_cmd" every second and runs it on the purifier.
+let airOpen = false, airWant = null;
+function openAir() { airOpen = true; $('aSheet').hidden = false; paintAir(); }
+function closeAir() { airOpen = false; $('aSheet').hidden = true; }
+function paintAir() {
+  if (!airOpen) return;
+  const a = { ...(airOf() || {}), ...(airWant || {}) }, has = airOf() != null;
+  $('asPm').textContent = has ? a.pm25 : '—';
+  $('asInfo').textContent = has ? `Nem %${a.hum} · ${r1(a.temp)}°C · Filtre %${a.filter}` : 'Cihazdan veri yok';
+  $('asSub').textContent = has ? (a.on ? 'Açık' : 'Kapalı') : '';
+  $('asPower').classList.toggle('on', !!a.on);
+  [...$('asModes').children].forEach((b) => b.classList.toggle('on', !!a.on && b.dataset.m === a.mode));
+  $('asLvl').textContent = a.fav ?? '—';
+}
+async function airCmd(cmd, want) {
+  haptic();
+  airWant = { ...(airWant || {}), ...want };
+  paintAir();
+  try {
+    await fetch(API + '/push/air_cmd?ttl=60', { method: 'POST', cache: 'no-store', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ cmd, at: Date.now() }) });
+  } catch (_) {}
+  clearTimeout(airCmd.t);
+  airCmd.t = setTimeout(() => { airWant = null; paintAir(); }, 6000);  // by then the bridge has pushed the real state
+}
+$('asClose').addEventListener('click', () => { haptic(); closeAir(); });
+$('asPower').addEventListener('click', () => { const on = !({ ...airOf(), ...airWant }).on; airCmd(on ? 'on' : 'off', { on }); });
+$('asModes').addEventListener('click', (e) => { const m = e.target.dataset?.m; if (m) airCmd(m, { on: true, mode: m }); });
+const airLvl = (d) => { const v = Math.max(1, Math.min(14, (({ ...airOf(), ...airWant }).fav || 7) + d)); airCmd('favorite ' + v, { on: true, mode: 'favorite', fav: v }); };
+$('asMinus').addEventListener('click', () => airLvl(-1));
+$('asPlus').addEventListener('click', () => airLvl(1));
 
 // ---------------------------------------------------------------- price chart sheet (push key "chart_<coin>")
 const CH_BARS = [['1m', '1 dk'], ['5m', '5 dk'], ['15m', '15 dk'], ['1H', '1 saat'], ['4H', '4 saat'], ['1D', '1 gün']];
@@ -2808,6 +2842,7 @@ async function loadPush() {
   try {
     const r = await api('/push');
     D.push = r.items || {};
+    paintAir();
     pushVersion = r.version;
     emit('push');
   } catch (_) {}
