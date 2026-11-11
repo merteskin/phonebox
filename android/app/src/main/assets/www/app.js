@@ -57,7 +57,7 @@ let pushVersion = null;
 const D = { state: null, quotas: null, work: null, procs: null, push: {}, weather: null, notes: store.get('notes', []) };
 
 const HIST = 90;
-const hist = { cpu: [], gpu: [], ram: [], vram: [], down: [], up: [], ping: [], gputemp: [], cputemp: [] };
+const hist = { cpu: [], gpu: [], ram: [], vram: [], down: [], up: [], ping: [], gputemp: [], cputemp: [], air: [] };
 // Time of the last sample and the usual gap between samples, so charts can glide one step left between them.
 // histOff is how many steps the charts still have to scroll. Every sample adds one and it drains at a steady
 // speed (gently corrected towards one step of reserve), so the charts never stop and wait for the next sample.
@@ -201,6 +201,8 @@ function ringSvg(pct, elapsed) {
 const shortCpu = (n) => (n || '').replace(/\((TM|R)\)/gi, '').replace(/\s+(CPU\s*)?@.*$/i, '').replace(/^(AMD|Intel)\s*/i, '').split(/\s+/).slice(0, 4).join(' ');
 const shortGpu = (n) => (n || 'GPU').replace(/^(NVIDIA|AMD|Intel\(R\))\s*/i, '').replace(/^(GeForce|Radeon)\s*/i, '').split(' ').slice(0, 4).join(' ');
 const gpuOf = (s) => s?.pc?.gpu;
+const airOf = () => D.push.air?.data;
+const AIR_MODE = { auto: 'Auto', silent: 'Sleep', favorite: 'Fav' };
 const netMax = () => Math.max(1, ...hist.down, ...hist.up) * 1.15;
 
 const METRICS = {
@@ -218,6 +220,12 @@ const METRICS = {
     sub: (s) => (gpuOf(s)?.vramTotal ? `${r1(gpuOf(s).vramUsed)} / ${Math.round(gpuOf(s).vramTotal)} GB` : '') },
   net: { label: 'NETWORK', name: 'Network', color: '--net', rate: true, hist: 'down', max: netMax, val: (s) => s.pc?.netDownBps,
     sub: (s) => '↑ ' + rateStr(s.pc?.netUpBps) + (s.ping?.ms != null ? ` · ${Math.round(s.ping.ms)} ms` : '') },
+  air: { label: 'AIR', name: 'Air purifier', color: '#2dd4bf', unit: 'PM2.5', max: () => Math.max(50, ...hist.air) * 1.2,
+    val: () => airOf()?.pm25,
+    sub: () => { const a = airOf(); if (!a) return 'No purifier data'; if (!a.on) return `Off · ${a.hum}%`;
+      return [(AIR_MODE[a.mode] || a.mode) + (a.mode === 'favorite' ? ` ${a.fav}` : ''), `${a.hum}%`, `${Math.round(a.temp)}°C`].join(' · '); },
+    title: () => { const a = airOf(); return a ? `Filter ${a.filter}% (${a.filterUsedH}/${a.filterH} h)` : null; },
+    hot: () => airOf()?.pm25 >= 75 },
   down: { label: 'DOWNLOAD', name: 'Download', color: '--net', rate: true, max: netMax, val: (s) => s.pc?.netDownBps },
   up: { label: 'UPLOAD', name: 'Upload', color: '--up', rate: true, max: netMax, val: (s) => s.pc?.netUpBps },
   ping: { label: 'PING', name: 'Ping', color: '#38bdf8', unit: 'ms', max: () => Math.max(50, ...hist.ping) * 1.2, val: (s) => s.ping?.ms,
@@ -2841,6 +2849,7 @@ function applyState(s) {
       pushHist('ping', s.ping?.ms);
       pushHist('gputemp', pc.gpu?.temp);
       pushHist('cputemp', pc.cpuTemp);
+      pushHist('air', airOf()?.pm25);
     }
   }
   emit('state');

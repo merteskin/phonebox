@@ -370,7 +370,26 @@ def kripto_board(s):
     }
 
 
+def air_loop():
+    """Hava temizleyici (miio_air.py + air.json) varsa 15 sn'de bir "air" push'lar."""
+    try:
+        import miio_air
+    except ImportError:
+        return
+    while True:
+        try:
+            a = miio_air.read()
+            if a is None:
+                return  # air.json ya da pycryptodome yok
+            push("air", a, ttl=120)
+        except Exception:
+            pass  # cihaz o an cevap vermedi; push süresi dolunca kutu boşalır
+        time.sleep(15)
+
+
 if __name__ == "__main__":
+    import threading
+    threading.Thread(target=air_loop, daemon=True).start()
     full = 0.0
     while True:
         if time.time() - full >= PERIOD:
