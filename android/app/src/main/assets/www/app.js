@@ -1707,8 +1707,8 @@ async function airCmd(cmd, want) {
   airWant = { ...(airWant || {}), ...want };
   paintAir();
   try {
-    await fetch(API + '/push/air_cmd?ttl=60', { method: 'POST', cache: 'no-store', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ cmd, at: Date.now() }) });
+    // the APK's request proxy drops POST bodies, so the command rides in ?value=
+    await fetch(API + '/push/air_cmd?ttl=60&value=' + encodeURIComponent(cmd), { method: 'POST', cache: 'no-store' });
   } catch (_) {}
   clearTimeout(airCmd.t);
   airCmd.t = setTimeout(() => { airWant = null; paintAir(); }, 6000);  // by then the bridge has pushed the real state

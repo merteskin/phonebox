@@ -372,7 +372,7 @@ def kripto_board(s):
 
 def air_loop():
     """Hava temizleyici (miio_air.py + air.json) varsa 15 sn'de bir "air" push'lar.
-    Panel popup'ı komutu "air_cmd" push'u olarak bırakır ({"cmd": "auto", "at": ms}); her saniye bakılır."""
+    Panel popup'ı komutu "air_cmd" push'u olarak bırakır (?value=auto); her saniye bakılır."""
     try:
         import miio_air
     except ImportError:
@@ -386,7 +386,8 @@ def air_loop():
                 done = at  # açılışta eski komutu tekrar çalıştırma
             elif at and at != done:
                 done = at
-                miio_air.command(str((c.get("data") or {}).get("cmd") or "status").split())
+                d = c.get("data")
+                miio_air.command(str((d.get("cmd") if isinstance(d, dict) else d) or "status").split())
                 last_read = 0
         except Exception:
             pass  # komut yok (404) ya da cihaz o an cevap vermedi
