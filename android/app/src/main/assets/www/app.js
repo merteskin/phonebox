@@ -9,6 +9,9 @@ const LOCALE = 'tr-TR';
 const COLS = 12, ROWS = 6;
 const $ = (id) => document.getElementById(id);
 const bridge = typeof Android !== 'undefined' ? Android : null;
+// The panel opened in a phone's browser (iPhone over Tailscale). Never true inside the Android app (tablet).
+const PHONE = !bridge && Math.min(screen.width, screen.height) < 600;
+if (PHONE) document.documentElement.classList.add('phone');
 // Live preview inside the agent's layout editor: the layout comes from the editor (unsaved), not from the agent.
 const PREVIEW = new URLSearchParams(location.search).has('preview') && window.parent !== window;
 
@@ -2481,7 +2484,13 @@ function buildLayout() {
         grid.classList.add('grid-with-launcher');
         box.classList.add('w-shortcuts-footer');
       }
-      box.style.gridArea = `${w.y + 1} / ${w.x + 1} / span ${w.h} / span ${w.w}`;
+      if (PHONE) {
+        // Phone browser: a scrolling grid (2 columns upright, 4 sideways) in the page's reading order.
+        box.style.order = String(w.y * 12 + w.x);
+        box.style.setProperty('--c2', String(w.w <= 4 ? 1 : 2));
+        box.style.setProperty('--c4', String(Math.min(4, Math.max(1, Math.round(w.w / 3)))));
+        box.style.setProperty('--r', String(w.h === 1 ? 2 : w.h * 2));
+      } else box.style.gridArea = `${w.y + 1} / ${w.x + 1} / span ${w.h} / span ${w.w}`;
       grid.appendChild(box);
       const ctx = { page: p, w, o: w.options || {}, box };
       let inst;
