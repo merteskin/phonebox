@@ -33,7 +33,7 @@ const FALLBACK_PAGES = [{
 const DEFAULT_CFG = {
   weather: { city: 'Tallinn', lat: 59.437, lon: 24.745 },
   night: { enabled: true, start: '00:30', end: '07:30', brightness: 0.02 },
-  display: { showSeconds: true, idleReturnSec: 90, vibrate: true, volumeKeys: true },
+  display: { showSeconds: true, idleReturnSec: 0, vibrate: true, volumeKeys: true },
   pages: FALLBACK_PAGES,
   shortcuts: [],
 };
@@ -2549,7 +2549,8 @@ function buildLayout() {
   const key = JSON.stringify([next, cfg.shortcuts, cfg.display?.showSeconds]);
   if (key === layoutKey) return;
   layoutKey = key;
-  const prevId = pages[curPage]?.id;
+  // Keep the page you are on across rebuilds (config/layout pushes) and across WebView reloads.
+  const prevId = pages[curPage]?.id ?? store.get('page', null);
   pages = next;
   for (const m of mounted) { try { m.inst.destroy?.(); } catch (_) {} }
   mounted = [];
@@ -2697,6 +2698,7 @@ function onScroll() {
   const p = Math.round(pager.scrollLeft / window.innerWidth);
   if (p === curPage) return;
   curPage = p;
+  if (pages[p]) store.set('page', pages[p].id);
   updateDots();
   flashTitle();
   setActive();
@@ -2819,7 +2821,7 @@ function tick() {
   if (darkSince && Date.now() - darkSince > 30_000) darkRoom = true;
   const dark = darkRoom && cfg.display?.nightWhenDark === true;
   setNight((isNight(now) || dark) && Date.now() > wakeUntil);
-  const idle = cfg.display?.idleReturnSec ?? 90;
+  const idle = cfg.display?.idleReturnSec ?? 0; // off unless set explicitly (0 = stay on the page)
   const held = ruleHold && curPage === ruleHold.page;
   if (idle > 0 && !held && Date.now() - lastTouch > idle * 1000 && (curPage !== 0 || sheet || !$('overview').hidden)) {
     closeSheet(); closeOverview(); goPage(0, true);
