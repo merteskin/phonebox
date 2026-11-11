@@ -404,9 +404,44 @@ def air_loop():
         time.sleep(1)
 
 
+def lamp_loop():
+    """Tapo lamba (tapo_lamp.py + tapo.json) varsa 10 sn'de bir "lamp" push'lar.
+    Panel popup'ı komutu "lamp_cmd" push'u olarak bırakır (?value=toggle / bright 40); her saniye bakılır."""
+    try:
+        import tapo_lamp
+    except ImportError:
+        return
+    last_read, done, first = 0.0, None, True
+    while True:
+        try:
+            c = http(f"{AGENT}/api/push/lamp_cmd")
+            at = (c or {}).get("at")
+            if first:
+                done = at  # açılışta eski komutu tekrar çalıştırma
+            elif at and at != done:
+                done = at
+                d = c.get("data")
+                tapo_lamp.command(str((d.get("cmd") if isinstance(d, dict) else d) or "status").split())
+                last_read = 0
+        except Exception:
+            pass  # komut yok (404) ya da ampul o an cevap vermedi
+        first = False
+        if time.time() - last_read >= 10:
+            last_read = time.time()
+            try:
+                a = tapo_lamp.read()
+                if a is None:
+                    return  # tapo.json yok
+                push("lamp", a, ttl=90)
+            except Exception:
+                pass  # push süresi dolunca kutu boşalır
+        time.sleep(1)
+
+
 if __name__ == "__main__":
     import threading
     threading.Thread(target=air_loop, daemon=True).start()
+    threading.Thread(target=lamp_loop, daemon=True).start()
     full = 0.0
     while True:
         if time.time() - full >= PERIOD:

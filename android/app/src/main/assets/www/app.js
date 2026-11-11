@@ -57,7 +57,7 @@ let pushVersion = null;
 const D = { state: null, quotas: null, work: null, procs: null, push: {}, weather: null, notes: store.get('notes', []) };
 
 const HIST = 90;
-const hist = { cpu: [], gpu: [], ram: [], vram: [], down: [], up: [], ping: [], gputemp: [], cputemp: [], air: [] };
+const hist = { cpu: [], gpu: [], ram: [], vram: [], down: [], up: [], ping: [], gputemp: [], cputemp: [], air: [], lamp: [] };
 // Time of the last sample and the usual gap between samples, so charts can glide one step left between them.
 // histOff is how many steps the charts still have to scroll. Every sample adds one and it drains at a steady
 // speed (gently corrected towards one step of reserve), so the charts never stop and wait for the next sample.
@@ -203,6 +203,7 @@ const shortGpu = (n) => (n || 'GPU').replace(/^(NVIDIA|AMD|Intel\(R\))\s*/i, '')
 const gpuOf = (s) => s?.pc?.gpu;
 const airOf = () => D.push.air?.data;
 const AIR_MODE = { auto: 'Auto', silent: 'Sleep', favorite: 'Fav' };
+const lampOf = () => D.push.lamp?.data;
 const netMax = () => Math.max(1, ...hist.down, ...hist.up) * 1.15;
 
 const METRICS = {
@@ -226,6 +227,9 @@ const METRICS = {
       return [(AIR_MODE[a.mode] || a.mode) + (a.mode === 'favorite' ? ` ${a.fav}` : ''), `${a.hum}%`, `${Math.round(a.temp)}°C`].join(' · '); },
     title: () => { const a = airOf(); return a ? `Filter ${a.filter}% (${a.filterUsedH}/${a.filterH} h)` : null; },
     hot: () => airOf()?.pm25 >= 75 },
+  lamp: { label: 'LAMP', name: 'Tapo lamp', color: '#facc15', unit: '%', max: () => 100,
+    val: () => (lampOf()?.on ? lampOf().bright : lampOf() ? 0 : null),
+    sub: () => { const l = lampOf(); if (!l) return 'No lamp data'; return l.on ? `On · ${l.temp || ''}K` : 'Off'; } },
   down: { label: 'DOWNLOAD', name: 'Download', color: '--net', rate: true, max: netMax, val: (s) => s.pc?.netDownBps },
   up: { label: 'UPLOAD', name: 'Upload', color: '--up', rate: true, max: netMax, val: (s) => s.pc?.netUpBps },
   ping: { label: 'PING', name: 'Ping', color: '#38bdf8', unit: 'ms', max: () => Math.max(50, ...hist.ping) * 1.2, val: (s) => s.ping?.ms,
@@ -1058,6 +1062,7 @@ W.stat = {
     const val = h('b', null, '—'), unit = h('small'), sub = h('div', 't-sub', ' ');
     box.append(canvas, h('div', 't-label', m.label), h('div', 't-val', val, unit), sub);
     if (o.metric === 'air') box.addEventListener('click', () => { haptic(); openAir(); });
+    if (o.metric === 'lamp') box.addEventListener('click', () => { haptic(); openLamp(); });
     const motion = metricMotion(m, (v, u) => {
       if (val.textContent !== v) val.textContent = v;
       if (unit.textContent !== u) unit.textContent = u;
@@ -1719,6 +1724,37 @@ $('asModes').addEventListener('click', (e) => { const m = e.target.dataset?.m; i
 const airLvl = (d) => { const v = Math.max(1, Math.min(14, (({ ...airOf(), ...airWant }).fav || 7) + d)); airCmd('favorite ' + v, { on: true, mode: 'favorite', fav: v }); };
 $('asMinus').addEventListener('click', () => airLvl(-1));
 $('asPlus').addEventListener('click', () => airLvl(1));
+
+// ---------------------------------------------------------------- Tapo lamp sheet (push "lamp" in, push "lamp_cmd" out)
+// The bridge (extras/bridge/okx_bridge.py + tapo_lamp.py) polls "lamp_cmd" every second and runs it on the bulb.
+let lampOpen = false, lampWant = null;
+function openLamp() { lampOpen = true; $('lSheet').hidden = false; paintLamp(); }
+function closeLamp() { lampOpen = false; $('lSheet').hidden = true; }
+function paintLamp() {
+  if (!lampOpen) return;
+  const l = { ...(lampOf() || {}), ...(lampWant || {}) }, has = lampOf() != null;
+  $('lsBr').textContent = has ? (l.on ? l.bright + '%' : 'Kapalı') : '—';
+  $('lsSub').textContent = has ? (l.on ? 'Açık' : 'Kapalı') : 'Ampulden veri yok';
+  $('lsPower').classList.toggle('on', !!l.on);
+  [...$('lsTemps').children].forEach((b) => b.classList.toggle('on', !!l.on && Math.abs(+b.dataset.k - (l.temp || 0)) < 300));
+}
+async function lampCmd(cmd, want) {
+  haptic();
+  lampWant = { ...(lampWant || {}), ...want };
+  paintLamp();
+  try {
+    // the APK's request proxy drops POST bodies, so the command rides in ?value=
+    await fetch(API + '/push/lamp_cmd?ttl=60&value=' + encodeURIComponent(cmd), { method: 'POST', cache: 'no-store' });
+  } catch (_) {}
+  clearTimeout(lampCmd.t);
+  lampCmd.t = setTimeout(() => { lampWant = null; paintLamp(); }, 6000);  // by then the bridge has pushed the real state
+}
+$('lsClose').addEventListener('click', () => { haptic(); closeLamp(); });
+$('lsPower').addEventListener('click', () => { const on = !({ ...lampOf(), ...lampWant }).on; lampCmd(on ? 'on' : 'off', { on }); });
+$('lsTemps').addEventListener('click', (e) => { const k = +e.target.dataset?.k; if (k) lampCmd('temp ' + k, { on: true, temp: k }); });
+const lampBr = (d) => { const v = Math.max(1, Math.min(100, Math.round((({ ...lampOf(), ...lampWant }).bright || 50) / 10) * 10 + d)); lampCmd('bright ' + v, { on: true, bright: v }); };
+$('lsMinus').addEventListener('click', () => lampBr(-10));
+$('lsPlus').addEventListener('click', () => lampBr(10));
 
 // ---------------------------------------------------------------- price chart sheet (push key "chart_<coin>")
 const CH_BARS = [['1m', '1 dk'], ['5m', '5 dk'], ['15m', '15 dk'], ['1H', '1 saat'], ['4H', '4 saat'], ['1D', '1 gün']];
@@ -2843,6 +2879,7 @@ async function loadPush() {
     const r = await api('/push');
     D.push = r.items || {};
     paintAir();
+    paintLamp();
     pushVersion = r.version;
     emit('push');
   } catch (_) {}
@@ -2885,6 +2922,7 @@ function applyState(s) {
       pushHist('gputemp', pc.gpu?.temp);
       pushHist('cputemp', pc.cpuTemp);
       pushHist('air', airOf()?.pm25);
+      pushHist('lamp', lampOf() ? (lampOf().on ? lampOf().bright : 0) : null);
     }
   }
   emit('state');

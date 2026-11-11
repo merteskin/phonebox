@@ -94,6 +94,13 @@ def main(a):
             json.dump({"ip": ip, "user": user, "password": pw}, f)
         print("Tamam, ampule bağlandım ve ayarı kaydettim.")
         return
+    command(a)
+    print(json.dumps(read(), ensure_ascii=False))
+
+
+def command(a):
+    """Panel/kısayol komutu: on|off|toggle|bright N|temp K (status = hiçbir şey yapma)."""
+    cmd = a[0] if a else "status"
     d = client()
     if cmd in ("on", "off"):
         d.call("set_device_info", {"device_on": cmd == "on"})
@@ -103,7 +110,6 @@ def main(a):
         d.call("set_device_info", {"device_on": True, "brightness": max(1, min(100, int(a[1])))})
     elif cmd == "temp":
         d.call("set_device_info", {"device_on": True, "color_temp": max(2500, min(6500, int(a[1])))})
-    print(json.dumps(read(), ensure_ascii=False))
 
 
 if __name__ == "__main__":
