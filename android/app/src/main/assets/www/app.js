@@ -2489,7 +2489,7 @@ function buildLayout() {
         box.style.order = String(w.y * 12 + w.x);
         box.style.setProperty('--c2', String(w.w <= 4 ? 1 : 2));
         box.style.setProperty('--c4', String(Math.min(4, Math.max(1, Math.round(w.w / 3)))));
-        box.style.setProperty('--r', String(w.h === 1 ? 2 : w.h * 2));
+        box.style.setProperty('--r', String(w.h === 1 ? 2 : 4)); // big cards capped so most pages fit one screen
       } else box.style.gridArea = `${w.y + 1} / ${w.x + 1} / span ${w.h} / span ${w.w}`;
       grid.appendChild(box);
       const ctx = { page: p, w, o: w.options || {}, box };

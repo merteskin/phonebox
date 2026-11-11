@@ -777,8 +777,9 @@ body.night #night { display: flex; }
 .ps-big .push-big { padding-bottom: 20cqh; }
 
 /* Phone browser only (html.phone is set when there is no Android bridge and the screen is small). */
-.phone .page { overflow-y: auto; overscroll-behavior-y: contain; padding: 8px 8px 24px; }
-.phone .grid, .phone .grid-with-launcher { height: auto; grid-template-columns: repeat(2, minmax(0, 1fr)); grid-template-rows: none; grid-auto-rows: 52px; }
+.phone .page { height: 100dvh; overflow-y: auto; overscroll-behavior-y: contain; padding: 8px 8px 22px; }
+/* Rows grow to fill the screen when the page fits; a longer page scrolls at the minimum row height. Holes are back-filled. */
+.phone .grid, .phone .grid-with-launcher { height: auto; min-height: 100%; grid-template-columns: repeat(2, minmax(0, 1fr)); grid-template-rows: none; grid-auto-rows: minmax(52px, 1fr); grid-auto-flow: row dense; }
 .phone .grid > .w { grid-column: span var(--c2, 2); grid-row: span var(--r, 2); }
 @media (orientation: landscape) {
   .phone .grid, .phone .grid-with-launcher { grid-template-columns: repeat(4, minmax(0, 1fr)); }
