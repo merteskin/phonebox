@@ -1072,10 +1072,10 @@ W.stat = {
       if (s) chart(canvas, [{ data: hist[m.hist || o.metric] || hist.cpu, color: c, max: m.max(s) }], { lag: histLag(now) });
     };
     return {
+      // The sparkline is redrawn only on fresh data (update), not every frame: a 30 fps canvas
+      // redraw per tile kept the GPU busy and the tablet's Mali driver panics under that load.
       frame(now) {
-        motion.frame(now);
-        draw(now);
-        return true;
+        return motion.frame(now);
       },
       update() {
         const s = D.state;
@@ -1154,10 +1154,10 @@ W.chart = {
       });
     });
     return {
-      frame(now) {
-        for (const motion of motions) motion.frame(now);
-        draw(now);
-        return true;
+      frame(now) { // chart redrawn in update() only (see W.stat)
+        let moving = false;
+        for (const motion of motions) if (motion.frame(now)) moving = true;
+        return moving;
       },
       update() {
         const s = D.state;
