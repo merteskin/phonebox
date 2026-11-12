@@ -36,3 +36,4 @@
   {"id": "status", "title": "Status", "icon": "🎯", "desc": "Quota rings, phone battery, top processes, volume and sessions.", "widgets": [{"type": "quotaring", "x": 0, "y": 0, "w": 3, "h": 3, "options": {"provider": "claude", "limit": "0"}}, {"type": "quotaring", "x": 3, "y": 0, "w": 3, "h": 3, "options": {"provider": "claude", "limit": "1"}}, {"type": "quotaring", "x": 6, "y": 0, "w": 3, "h": 3, "options": {"provider": "codex", "limit": "0"}}, {"type": "battery", "x": 9, "y": 0, "w": 3, "h": 3}, {"type": "topprocs", "x": 0, "y": 3, "w": 5, "h": 3}, {"type": "volume", "x": 5, "y": 3, "w": 2, "h": 3}, {"type": "sessions", "x": 7, "y": 3, "w": 5, "h": 3}]},
   {"id": "calm", "title": "Calm", "icon": "🫁", "desc": "Breathing exercise, a clock face and a quote.", "widgets": [{"type": "breathe", "x": 0, "y": 0, "w": 7, "h": 6}, {"type": "analog", "x": 7, "y": 0, "w": 5, "h": 4}, {"type": "quote", "x": 7, "y": 4, "w": 5, "h": 2}]}
 ]
+
