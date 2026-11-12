@@ -449,7 +449,7 @@ def grok_loop():
             st = os.stat(path)
             key = (st.st_mtime, st.st_size)
             if key != sent or time.time() - sent_at > 3600:
-                with open(path, encoding="utf-8", errors="replace") as f:
+                with open(path, encoding="utf-8-sig", errors="replace") as f:
                     text = f.read(20000)
                 push("grok", {"title": "Grok özeti", "text": text, "mtime": int(st.st_mtime * 1000)}, ttl=7200)
                 sent, sent_at = key, time.time()
