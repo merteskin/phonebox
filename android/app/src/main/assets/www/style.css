@@ -1,11 +1,13 @@
 :root {
   --bg: #06080b;
-  --card: rgba(255, 255, 255, 0.045);
+  --card: rgba(255, 255, 255, 0.05);
   --card-hi: rgba(255, 255, 255, 0.075);
-  --line: rgba(255, 255, 255, 0.08);
+  --line: rgba(255, 255, 255, 0.09);
   --text: #eef2f6;
-  --muted: #8a94a3;
-  --dim: #5b6472;
+  --muted: #97a1b0;
+  --dim: #6b7586;
+  --r: 18px;
+  --r-sm: 12px;
   --cpu: #2dd4bf;
   --gpu: #84cc16;
   --ram: #a78bfa;
@@ -80,7 +82,7 @@ button { font: inherit; color: inherit; background: none; border: 0; }
   grid-template-rows: repeat(4, minmax(0, 1fr)) minmax(0, 1.5fr) clamp(42px, 7vh, 54px);
 }
 .w { position: relative; min-width: 0; min-height: 0; overflow: hidden; container-type: size; }
-.card { background: var(--card); border: 1px solid var(--line); border-radius: clamp(10px, 7cqmin, 20px); }
+.card { background: linear-gradient(180deg, rgba(255, 255, 255, .062), rgba(255, 255, 255, .03)); border: 1px solid var(--line); border-radius: clamp(12px, 7cqmin, var(--r)); box-shadow: inset 0 1px 0 rgba(255, 255, 255, .045); }
 
 .w-title { display: flex; align-items: baseline; gap: 8px; font-size: 11px; letter-spacing: .12em; text-transform: uppercase; font-weight: 700; color: var(--c, var(--muted)); white-space: nowrap; overflow: hidden; }
 .w-sub { margin-left: auto; font-size: 10.5px; letter-spacing: 0; text-transform: none; font-weight: 400; color: var(--dim); overflow: hidden; text-overflow: ellipsis; }
@@ -840,3 +842,64 @@ body.night #night { display: flex; }
 #lSheet.busy .as-body { opacity: .6; }
 #lSheet .as-read b { color: #facc15; }
 #lSheet .as-power.on { background: rgba(250, 204, 21, .22); color: #facc15; box-shadow: 0 0 0 2px #facc15; }
+
+/* ---------- visual polish ----------
+   Static styling only: no blur, no filters, no large shadows, no new animations (the tablet's Mali GPU is fragile). */
+.w-title { letter-spacing: .13em; line-height: 1.35; }
+.w-sub { font-size: 11px; color: var(--muted); opacity: .8; }
+.q-card, .w-kripto, .w-clock, .p-sheet { border-radius: var(--r); }
+.q-row, .q-message, .proc, .ap-detail, .w-clock .wx { border-radius: var(--r-sm); }
+.clock-split .cs-date, .w-note { border-radius: 14px; }
+
+/* cheaper paints: glows and soft shadows replaced by flat equivalents */
+.w-clock.clock-split .clock { text-shadow: none; }
+.w-stat .t-val, .w-stat .t-sub { text-shadow: 0 1px 2px rgba(0, 0, 0, .9); }
+.g-dial .fg, .sa-sun { filter: none; }
+.art-wrap { box-shadow: 0 2px 6px rgba(0, 0, 0, .4); border: 1px solid var(--line); }
+.p-sheet { box-shadow: none; border-color: rgba(255, 255, 255, .14); }
+.ap-card { box-shadow: 0 0 0 4px rgba(217, 119, 87, .12); }
+.br-ball { box-shadow: none; }
+.dot.on { box-shadow: 0 0 0 3px rgba(34, 197, 94, .22); }
+.kx-dot.on, .clock-split .cd-note.on::before { box-shadow: 0 0 0 2px rgba(34, 197, 94, .25); }
+
+/* shortcut keys: calmer tint, clearer label; launcher row puts the icon beside the label */
+.key {
+  border-radius: 14px;
+  background: linear-gradient(170deg, color-mix(in srgb, var(--k) 20%, #0d1116), color-mix(in srgb, var(--k) 7%, #0b0e13));
+  border-color: color-mix(in srgb, var(--k) 30%, rgba(255, 255, 255, .06));
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .05);
+}
+.key .k-label { font-weight: 600; letter-spacing: .01em; color: #eef2f6; }
+.w-shortcuts-footer .key { flex-direction: row; gap: 8px; border-radius: var(--r-sm); padding: 0 8px; }
+.w-shortcuts-footer .k-icon { font-size: 19px; }
+.w-shortcuts-footer .k-label { font-size: 12.5px; max-width: none; min-width: 0; }
+
+/* lists and rows */
+.pl-i, .ib-i, .cl-i, .sess, .pi { background: rgba(255, 255, 255, .045); }
+.pl-i { padding: 5px 9px; border-radius: 9px; }
+.chip, .chip-btn, .gh-bell, .mini-btn { border-radius: 99px; padding-inline: 9px; background: rgba(255, 255, 255, .075); }
+.seg { border-radius: var(--r-sm); background: rgba(255, 255, 255, .07); }
+.seg button { border-radius: 9px; }
+.track, .q-track { background: rgba(255, 255, 255, .1); }
+
+/* text that stayed tiny on full-page cards now scales with the card */
+.m-row { font-size: clamp(11.5px, 3.4cqh, 14px); margin-bottom: 4px; }
+.meters .track { height: clamp(6px, 1.5cqh, 9px); border-radius: 99px; }
+.s-name { font-size: clamp(11px, 3cqh, 13px); }
+.fc.vert .fc-i { font-size: clamp(11px, 3.2cqh, 16px); padding: 0 4px; }
+.fc.vert .fc-i + .fc-i { border-top: 1px solid rgba(255, 255, 255, .05); }
+.fc-t { font-weight: 500; }
+.hn-t, .tp-i, .cl-i { font-size: 13px; }
+
+/* media */
+.m-app { letter-spacing: .16em; font-weight: 700; }
+.m-title { letter-spacing: -.01em; }
+.times { font-size: 11.5px; }
+
+/* Grok: the small tile had no padding; the full-page card gets readable text */
+.w-grok { padding: 9px 12px; display: flex; flex-direction: column; gap: 4px; }
+.grok-c { font-size: 12.5px; line-height: 1.4; gap: 3px; }
+.grok-b { font-size: clamp(13px, 2.3cqh, 17px); line-height: 1.5; gap: .3em; padding: 4px 4px 0; }
+.grok-h { font-weight: 700; margin-top: .7em; letter-spacing: .01em; }
+.grok-li { padding-left: 1.1em; }
+.grok-li::before { left: .2em; color: rgb(var(--ambient)); }
