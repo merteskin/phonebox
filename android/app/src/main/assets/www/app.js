@@ -130,7 +130,7 @@ function shortDur(ms) {
   const hr = Math.floor(m / 60);
   return hr < 24 ? `${hr}h ${m % 60}m` : `${Math.floor(hr / 24)}d`;
 }
-const ago = (ts) => { const d = Date.now() - ts; return d < 45_000 ? 'az önce' : shortDur(d) + ' önce'; };
+const ago = (ts) => { const d = Date.now() - ts; return d < 60_000 ? 'az önce' : shortDur(d) + ' önce'; };
 const r1 = (v) => (v == null ? '—' : (Math.round(v * 10) / 10).toString());
 const fmtMem = (mb) => (mb >= 1024 ? (mb / 1024).toFixed(1) + ' GB' : Math.round(mb) + ' MB');
 const cssVar = (name) => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
@@ -1684,7 +1684,7 @@ W.grok = {
           .filter((l) => /^(?:[-*•]|\d+[.)])\s+/.test(l))
           .map((l) => l.replace(/^(?:[-*•]|\d+[.)])\s+/, '').replace(/\*\*/g, '')
             .replace(/\s+[—–]\s+.*$/, '').replace(/\s*\([^)]*\)/g, '').replace(/[.;,\s]+$/, ''))
-          .filter((l) => l && !/^fiyatlar\s*:/i.test(l));
+          .filter((l) => l && !/^[^:]{0,24}fiyat[^:]{0,12}:/i.test(l));
         const item = (l) => {
           const m = l.match(/^([^:]{2,18}):\s*(.+)$/);
           return h('div', 'grok-cl', m ? [h('b', null, m[1]), ' ' + m[2]] : l);

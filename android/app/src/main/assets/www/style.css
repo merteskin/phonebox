@@ -916,3 +916,5 @@ body.night #night { display: flex; }
 .web #pager, .web .page { height: var(--app-h, 100dvh); }
 .web .page { padding-bottom: calc(17px + env(safe-area-inset-bottom)); }
 .web #dots { bottom: env(safe-area-inset-bottom); }
+/* Safari: the cqmin-based radius came out square on the iPad, so cards get a fixed radius in the browser */
+.web .card { border-radius: 16px; }
