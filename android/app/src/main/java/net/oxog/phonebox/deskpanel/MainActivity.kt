@@ -28,6 +28,7 @@ import android.webkit.WebView
 import android.webkit.WebViewClient
 import androidx.webkit.WebViewAssetLoader
 import org.json.JSONObject
+import java.io.ByteArrayInputStream
 
 /**
  * Full-screen desk panel. The UI is plain HTML/JS bundled in assets/www.
@@ -69,6 +70,8 @@ class MainActivity : Activity(), SensorEventListener {
 
         with(web.settings) {
             javaScriptEnabled = true
+            allowFileAccess = false
+            allowContentAccess = false
             domStorageEnabled = true
             mediaPlaybackRequiresUserGesture = false
             cacheMode = WebSettings.LOAD_NO_CACHE
@@ -77,9 +80,13 @@ class MainActivity : Activity(), SensorEventListener {
         web.isVerticalScrollBarEnabled = false
         web.isHorizontalScrollBarEnabled = false
         web.webViewClient = object : WebViewClient() {
+            override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean =
+                !request.isForMainFrame || request.url.toString() != PANEL_URL
+
             override fun shouldInterceptRequest(view: WebView, request: WebResourceRequest): WebResourceResponse? {
                 val url = request.url
-                if (url.host == ASSET_HOST && url.path?.startsWith("/agent/") == true) return proxy(request)
+                if (url.scheme == "https" && url.host == ASSET_HOST && url.path?.startsWith("/agent/") == true)
+                    return proxy(request)
                 return assetLoader.shouldInterceptRequest(url)
             }
         }
@@ -87,11 +94,14 @@ class MainActivity : Activity(), SensorEventListener {
         // Lets you debug the panel from the computer via chrome://inspect.
         WebView.setWebContentsDebuggingEnabled(BuildConfig.DEBUG)
 
-        web.loadUrl("https://$ASSET_HOST/assets/www/index.html")
+        web.loadUrl(PANEL_URL)
         hideSystemUi()
     }
 
     private fun proxy(req: WebResourceRequest): WebResourceResponse {
+        val origin = req.requestHeaders.entries.firstOrNull { it.key.equals("Origin", ignoreCase = true) }?.value
+        if (origin != null && origin != "https://$ASSET_HOST")
+            return WebResourceResponse("text/plain", "utf-8", 403, "Forbidden", NO_STORE, ByteArrayInputStream(ByteArray(0)))
         val path = req.url.encodedPath!!.removePrefix("/agent")
         val query = req.url.encodedQuery?.let { "?$it" } ?: ""
         val r = link.request(req.method, path + query)
@@ -257,6 +267,7 @@ class MainActivity : Activity(), SensorEventListener {
 
     companion object {
         private const val ASSET_HOST = "appassets.androidplatform.net"
+        private const val PANEL_URL = "https://$ASSET_HOST/assets/www/index.html"
         private val NO_STORE = mapOf("Cache-Control" to "no-store")
     }
 }

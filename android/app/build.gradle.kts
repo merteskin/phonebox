@@ -1,4 +1,4 @@
-plugins {
+﻿plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
 }
@@ -17,8 +17,8 @@ android {
         applicationId = "net.oxog.phonebox.deskpanel"
         minSdk = 28
         targetSdk = 35
-        versionCode = 8
-        versionName = "0.6.2"
+        versionCode = 35
+        versionName = "0.6.2-stable.27"
     }
 
     signingConfigs {

@@ -2,6 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https: http:; connect-src 'self' https:; frame-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
 <title>PhoneBox</title>
 <link rel="stylesheet" href="style.css">
@@ -26,6 +27,49 @@
     <button class="ps-btn" id="psClose" aria-label="Close">✕</button>
   </div>
   <div class="ps-list" id="psList"></div>
+</div>
+
+<div class="p-sheet" id="cSheet" hidden>
+  <div class="ps-head">
+    <div class="ps-title"><b id="csTitle"></b><small id="csSub"></small></div>
+    <div class="seg" id="csBars"></div>
+    <div class="seg" id="csKind"><button data-k="c" class="on">Mum</button><button data-k="l">Çizgi</button></div>
+    <button class="ps-btn" id="csClose" aria-label="Close">✕</button>
+  </div>
+  <canvas id="csCanvas"></canvas>
+</div>
+
+<div class="p-sheet" id="gSheet" hidden>
+  <div class="ps-head">
+    <div class="ps-title"><b>🛰️ Grok özeti</b><small id="gsSub"></small></div>
+    <button class="ps-btn" id="gsClose" aria-label="Close">✕</button>
+  </div>
+  <div class="gs-body" id="gsBody"></div>
+</div>
+<div class="p-sheet" id="aSheet" hidden>
+  <div class="ps-head">
+    <div class="ps-title"><b>Hava Temizleyici</b><small id="asSub"></small></div>
+    <button class="ps-btn" id="asClose" aria-label="Close">✕</button>
+  </div>
+  <div class="as-body">
+    <div class="as-read"><b id="asPm">—</b><small>PM2.5</small><span id="asInfo"></span></div>
+    <button class="as-power" id="asPower" aria-label="Power"><svg viewBox="0 0 24 24" width="44" height="44" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 3v9"/><path d="M6.3 6.8a8 8 0 1 0 11.4 0"/></svg></button>
+    <div class="seg as-modes" id="asModes"><button data-m="auto">Oto</button><button data-m="silent">Uyku</button><button data-m="favorite">Favori</button></div>
+    <div class="as-level"><button id="asMinus">−</button><span><b id="asLvl">—</b><small>Favori seviye</small></span><button id="asPlus">+</button></div>
+  </div>
+</div>
+
+<div class="p-sheet" id="lSheet" hidden>
+  <div class="ps-head">
+    <div class="ps-title"><b>Lamba</b><small id="lsSub"></small></div>
+    <button class="ps-btn" id="lsClose" aria-label="Close">✕</button>
+  </div>
+  <div class="as-body">
+    <div class="as-read"><b id="lsBr">—</b><small>PARLAKLIK</small></div>
+    <button class="as-power" id="lsPower" aria-label="Power"><svg viewBox="0 0 24 24" width="44" height="44" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 3v9"/><path d="M6.3 6.8a8 8 0 1 0 11.4 0"/></svg></button>
+    <div class="seg as-modes" id="lsTemps"><button data-k="2700">Sıcak</button><button data-k="4000">Doğal</button><button data-k="6500">Soğuk</button></div>
+    <div class="as-level"><button id="lsMinus">−</button><span><b>±10</b><small>Parlaklık</small></span><button id="lsPlus">+</button></div>
+  </div>
 </div>
 
 <div id="approval" hidden>

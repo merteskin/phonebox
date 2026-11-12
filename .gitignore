@@ -34,3 +34,5 @@ Thumbs.db
 .config/
 .local/
 config.json.bak
+extras/bridge/air.json
+extras/bridge/tapo.json

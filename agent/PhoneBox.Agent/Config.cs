@@ -215,6 +215,15 @@ public sealed partial class ConfigStore(string path)
     /// <summary>Version stamp (file write time) so the phone can notice changes.</summary>
     public long Version { get { Get(); return _stamp.Ticks; } }
 
+    public object? PanelSettings()
+    {
+        lock (_lock)
+        {
+            var config = Get();
+            return _loaded ? new { version = _stamp.Ticks, config = config.ToPublic() } : null;
+        }
+    }
+
     public AgentConfig Get()
     {
         lock (_lock)
@@ -224,7 +233,8 @@ public sealed partial class ConfigStore(string path)
                 var stamp = File.GetLastWriteTimeUtc(path);
                 if (stamp != _stamp)
                 {
-                    _config = Normalize(JsonSerializer.Deserialize<AgentConfig>(File.ReadAllText(path), ReadOpts) ?? new());
+                    _config = Normalize(JsonSerializer.Deserialize<AgentConfig>(File.ReadAllText(path), ReadOpts)
+                        ?? throw new JsonException("Empty config"));
                     _stamp = stamp;
                     _loaded = true;
                 }
@@ -418,7 +428,9 @@ public sealed partial class ConfigStore(string path)
             var onDisk = JsonSerializer.Deserialize<AgentConfig>(File.ReadAllText(path), ReadOpts);
             if (onDisk?.Lan?.Token == c.Lan.Token && onDisk?.Lan?.WebhookToken == c.Lan.WebhookToken && onDisk?.Lan?.UsbToken == c.Lan.UsbToken) return;
         }
-        catch { }
+        catch (FileNotFoundException) when (!_loaded) { }
+        catch (DirectoryNotFoundException) when (!_loaded) { }
+        catch { return; }
         Save(JsonSerializer.Serialize(c, WriteOpts));
     }
 

@@ -9,6 +9,21 @@ const LOCALE = 'tr-TR';
 const COLS = 12, ROWS = 6;
 const $ = (id) => document.getElementById(id);
 const bridge = typeof Android !== 'undefined' ? Android : null;
+// The panel opened in a phone's browser (iPhone over Tailscale). Never true inside the Android app (tablet).
+const PHONE = !bridge && Math.min(screen.width, screen.height) < 600;
+if (PHONE) document.documentElement.classList.add('phone');
+// A tablet's browser (iPad over Tailscale): the normal layout sideways, a 4-column scrolling grid upright (CSS).
+const TABLET_WEB = !bridge && !PHONE && navigator.maxTouchPoints > 0;
+if (TABLET_WEB) document.documentElement.classList.add('tablet-web');
+// In a browser (above all an iPad/iPhone home-screen web app, which keeps the status bar) 100vh is taller than the
+// visible area, so the bottom row was cut off. Size the page from the real visible height instead.
+if (!bridge) {
+  document.documentElement.classList.add('web');
+  const fitHeight = () => document.documentElement.style.setProperty('--app-h', window.innerHeight + 'px');
+  fitHeight();
+  window.addEventListener('resize', fitHeight);
+  window.addEventListener('orientationchange', () => setTimeout(fitHeight, 300));
+}
 // Live preview inside the agent's layout editor: the layout comes from the editor (unsaved), not from the agent.
 const PREVIEW = new URLSearchParams(location.search).has('preview') && window.parent !== window;
 
@@ -27,7 +42,7 @@ const FALLBACK_PAGES = [{
 const DEFAULT_CFG = {
   weather: { city: 'Tallinn', lat: 59.437, lon: 24.745 },
   night: { enabled: true, start: '00:30', end: '07:30', brightness: 0.02 },
-  display: { showSeconds: true, idleReturnSec: 90, vibrate: true, volumeKeys: true },
+  display: { showSeconds: true, idleReturnSec: 0, vibrate: true, volumeKeys: true },
   pages: FALLBACK_PAGES,
   shortcuts: [],
 };
@@ -39,6 +54,7 @@ const store = {
 
 let cfg = PREVIEW ? { ...DEFAULT_CFG, pages: [] } : { ...DEFAULT_CFG, ...store.get('cfg', {}) };
 let cfgVersion = null;
+let cfgLoading = false;
 let online = null;
 let lastTouch = Date.now();
 let wakeUntil = 0;
@@ -50,7 +66,19 @@ let pushVersion = null;
 const D = { state: null, quotas: null, work: null, procs: null, push: {}, weather: null, notes: store.get('notes', []) };
 
 const HIST = 90;
-const hist = { cpu: [], gpu: [], ram: [], vram: [], down: [], up: [], ping: [], gputemp: [], cputemp: [] };
+const hist = { cpu: [], gpu: [], ram: [], vram: [], down: [], up: [], ping: [], gputemp: [], cputemp: [], air: [], lamp: [] };
+// Time of the last sample and the usual gap between samples, so charts can glide one step left between them.
+// histOff is how many steps the charts still have to scroll. Every sample adds one and it drains at a steady
+// speed (gently corrected towards one step of reserve), so the charts never stop and wait for the next sample.
+let histAt = 0, histGap = 1000, histOff = 0, histOffAt = 0;
+const histLag = (now = performance.now()) => {
+  const dt = now - histOffAt;
+  if (dt <= 0) return histOff;
+  histOffAt = now;
+  if (!histAt || dt > 2000) { histOff = Math.min(histOff, 1); return histOff; }
+  histOff = Math.max(-1, histOff - (dt * Math.max(0.2, 1 + 0.3 * (histOff - 1))) / histGap);
+  return histOff;
+};
 const pushHist = (k, v) => { const a = hist[k]; a.push(v ?? 0); if (a.length > HIST) a.shift(); };
 
 // ---------------------------------------------------------------- helpers
@@ -102,7 +130,7 @@ function shortDur(ms) {
   const hr = Math.floor(m / 60);
   return hr < 24 ? `${hr}h ${m % 60}m` : `${Math.floor(hr / 24)}d`;
 }
-const ago = (ts) => { const d = Date.now() - ts; return d < 45_000 ? 'az önce' : shortDur(d) + ' önce'; };
+const ago = (ts) => { const d = Date.now() - ts; return d < 60_000 ? 'az önce' : shortDur(d) + ' önce'; };
 const r1 = (v) => (v == null ? '—' : (Math.round(v * 10) / 10).toString());
 const fmtMem = (mb) => (mb >= 1024 ? (mb / 1024).toFixed(1) + ' GB' : Math.round(mb) + ' MB');
 const cssVar = (name) => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
@@ -140,17 +168,20 @@ function chart(canvas, series, opts = {}) {
     const d = s.data;
     if (d.length < 2) continue;
     const max = s.max || 1;
-    const step = w / (HIST - 1);
-    const x0 = w - (d.length - 1) * step;
+    // two steps wider than the canvas, so points slide in from beyond the right edge and out past the left one
+    const step = w / (HIST - 3);
+    const x0 = w - (d.length - 1) * step + (opts.lag || 0) * step;
+    const xEnd = x0 + (d.length - 1) * step;
     const y = (v) => hh - (Math.min(v, max) / max) * (hh - top);
     g.beginPath();
     g.moveTo(x0, y(d[0]));
     for (let i = 1; i < d.length; i++) g.lineTo(x0 + i * step, y(d[i]));
+    if (xEnd < w) g.lineTo(w, y(d[d.length - 1])); // a late sample: hold the last value up to the edge
     g.lineWidth = 1.6 * dpr;
     g.strokeStyle = s.color;
     g.lineJoin = 'round';
     g.stroke();
-    g.lineTo(w, hh);
+    g.lineTo(Math.max(xEnd, w), hh);
     g.lineTo(x0, hh);
     g.closePath();
     const grad = g.createLinearGradient(0, 0, 0, hh);
@@ -176,15 +207,22 @@ function ringSvg(pct, elapsed) {
 }
 
 // ---------------------------------------------------------------- metrics (stat, gauge, chart widgets)
-const shortCpu = (n) => (n || '').replace(/^(AMD|Intel\(R\))\s*/, '').split(' ').slice(0, 4).join(' ');
+const shortCpu = (n) => (n || '').replace(/\((TM|R)\)/gi, '').replace(/\s+(CPU\s*)?@.*$/i, '').replace(/^(AMD|Intel)\s*/i, '').split(/\s+/).slice(0, 4).join(' ');
+const shortGpu = (n) => (n || 'GPU').replace(/^(NVIDIA|AMD|Intel\(R\))\s*/i, '').replace(/^(GeForce|Radeon)\s*/i, '').split(' ').slice(0, 4).join(' ');
 const gpuOf = (s) => s?.pc?.gpu;
+const airOf = () => D.push.air?.data;
+const AIR_MODE = { auto: 'Auto', silent: 'Sleep', favorite: 'Fav' };
+const lampOf = () => D.push.lamp?.data;
 const netMax = () => Math.max(1, ...hist.down, ...hist.up) * 1.15;
 
 const METRICS = {
   cpu: { label: 'CPU', name: 'Processor', color: '--cpu', unit: '%', max: () => 100, val: (s) => s.pc?.cpu,
-    sub: (s) => (s.pc?.cpuTemp != null ? `${Math.round(s.pc.cpuTemp)}°C` : shortCpu(s.pc?.cpuName)), title: (s) => s.pc?.cpuName },
+    sub: (s) => [shortCpu(s.pc?.cpuName), s.pc?.cpuTemp != null ? `${Math.round(s.pc.cpuTemp)}°C` : null].filter(Boolean).join(' · '), title: (s) => s.pc?.cpuName,
+    hot: (s) => s.pc?.cpuTemp >= 90 },
   gpu: { label: 'GPU', name: 'Graphics', color: '--gpu', unit: '%', max: () => 100, val: (s) => gpuOf(s)?.util,
-    sub: (s) => (gpuOf(s) ? `${Math.round(gpuOf(s).temp)}°C · ${Math.round(gpuOf(s).power)} W` : 'No GPU data'), title: (s) => gpuOf(s)?.name },
+    sub: (s) => { const g = gpuOf(s); if (!g) return 'No GPU data'; const n = shortGpu(g.name);
+      return [n, g.temp != null ? `${Math.round(g.temp)}°C` : null, g.power != null ? `${Math.round(g.power)} W` : null].filter(Boolean).join(' · '); }, title: (s) => gpuOf(s)?.name,
+    hot: (s) => gpuOf(s)?.temp >= 90 },
   ram: { label: 'RAM', name: 'Memory', color: '--ram', unit: 'GB', max: (s) => s.pc?.ramTotalGb || 1, val: (s) => s.pc?.ramUsedGb, fmt: r1,
     pct: (s) => (s.pc ? (s.pc.ramUsedGb / s.pc.ramTotalGb) * 100 : null), sub: (s) => (s.pc ? `/ ${Math.round(s.pc.ramTotalGb)} GB` : '') },
   vram: { label: 'VRAM', name: 'Video memory', color: '--gpu', unit: '%', max: () => 100,
@@ -192,6 +230,15 @@ const METRICS = {
     sub: (s) => (gpuOf(s)?.vramTotal ? `${r1(gpuOf(s).vramUsed)} / ${Math.round(gpuOf(s).vramTotal)} GB` : '') },
   net: { label: 'NETWORK', name: 'Network', color: '--net', rate: true, hist: 'down', max: netMax, val: (s) => s.pc?.netDownBps,
     sub: (s) => '↑ ' + rateStr(s.pc?.netUpBps) + (s.ping?.ms != null ? ` · ${Math.round(s.ping.ms)} ms` : '') },
+  air: { label: 'AIR', name: 'Air purifier', color: '#2dd4bf', unit: 'PM2.5', max: () => Math.max(50, ...hist.air) * 1.2,
+    val: () => airOf()?.pm25,
+    sub: () => { const a = airOf(); if (!a) return 'No purifier data'; if (!a.on) return `Off · ${a.hum}%`;
+      return [(AIR_MODE[a.mode] || a.mode) + (a.mode === 'favorite' ? ` ${a.fav}` : ''), `${a.hum}%`, `${Math.round(a.temp)}°C`].join(' · '); },
+    title: () => { const a = airOf(); return a ? `Filter ${a.filter}% (${a.filterUsedH}/${a.filterH} h)` : null; },
+    hot: () => airOf()?.pm25 >= 75 },
+  lamp: { label: 'LAMP', name: 'Tapo lamp', color: '#facc15', unit: '%', max: () => 100,
+    val: () => (lampOf()?.on ? lampOf().bright : lampOf() ? 0 : null),
+    sub: () => { const l = lampOf(); if (!l) return 'No lamp data'; return l.on ? `On · ${l.temp || ''}K` : 'Off'; } },
   down: { label: 'DOWNLOAD', name: 'Download', color: '--net', rate: true, max: netMax, val: (s) => s.pc?.netDownBps },
   up: { label: 'UPLOAD', name: 'Upload', color: '--up', rate: true, max: netMax, val: (s) => s.pc?.netUpBps },
   ping: { label: 'PING', name: 'Ping', color: '#38bdf8', unit: 'ms', max: () => Math.max(50, ...hist.ping) * 1.2, val: (s) => s.ping?.ms,
@@ -202,11 +249,39 @@ const METRICS = {
     sub: (s) => (s.pc?.cpuTemp == null ? 'needs LibreHardwareMonitor' : shortCpu(s.pc?.cpuName)) },
 };
 
-function metricText(m, s) {
-  const v = m.val(s);
+function metricText(m, s, v = m.val(s)) {
   if (m.rate) return fmtRate(v);
   if (v == null) return ['—', m.unit || ''];
   return [m.fmt ? m.fmt(v) : String(Math.round(v)), m.unit || ''];
+}
+
+function metricMotion(metric, paint) {
+  let from, target, started, state, dur = 1000;
+  const valueAt = now => {
+    if (from == null || target == null) return target;
+    const t = Math.min(1, Math.max(0, (now - started) / dur));
+    return from + (target - from) * t;
+  };
+  return {
+    update(s) {
+      const value = metric.val(s);
+      if (value !== target || !state) {
+        const now = performance.now();
+        from = state ? valueAt(now) : value;
+        target = value;
+        started = now;
+        dur = histGap;
+      }
+      state = s;
+      paint(...metricText(metric, s, valueAt(performance.now())));
+    },
+    frame(now) {
+      if (!state || from === target) return false;
+      paint(...metricText(metric, state, valueAt(now)));
+      if (now - started >= dur || from == null || target == null) from = target;
+      return from !== target;
+    },
+  };
 }
 
 // ---------------------------------------------------------------- weather (Open-Meteo, straight from the phone)
@@ -322,10 +397,15 @@ function keyButton(s) {
 
 // ---------------------------------------------------------------- media (shared state, any number of widgets)
 let media = null;          // last media state + the time it was received
+const WAVE_WINDOW_MS = 3120;
+const WAVE_BUFFER_MS = 100;
+const waveSamples = [];
+let waveLevel = 0;
+let waveAverage = null;
 let volDragging = false;
 const DEFAULT_AMBIENT = '45, 212, 191';
 
-function averageColor(img) {
+function coverStyle(img) {
   try {
     const c = document.createElement('canvas');
     c.width = c.height = 16;
@@ -338,20 +418,38 @@ function averageColor(img) {
       if (mx < 30 || mx - mn < 20) continue; // skip very dark / grey pixels
       r += d[i]; gg += d[i + 1]; b += d[i + 2]; n++;
     }
-    if (!n) return null;
-    const [R, G, B] = [r / n, gg / n, b / n];
-    const k = 220 / (Math.max(R, G, B) || 1); // normalise brightness
-    return [R, G, B].map((v) => Math.round(Math.min(255, v * k))).join(', ');
+    const k = 220 / (Math.max(r, gg, b) || 1); // normalise brightness
+    const rgb = n ? [r, gg, b].map((v) => Math.round(Math.min(255, v * k))).join(', ') : DEFAULT_AMBIENT;
+    return { rgb, backdrop: c.toDataURL('image/png') };
   } catch (_) { return null; }
 }
 const setAmbient = (rgb) => document.documentElement.style.setProperty('--ambient', rgb || DEFAULT_AMBIENT);
+
+function updateWave(levels) {
+  if (!levels.length) {
+    waveLevel = 0;
+    waveAverage = null;
+    waveSamples.length = 0;
+  } else {
+    const rms = Math.sqrt(levels.reduce((sum, value) => sum + value * value, 0) / levels.length) / 100;
+    // Emphasize short changes around the track's recent loudness, even on heavily compressed tracks.
+    waveAverage ??= rms;
+    waveAverage += (rms - waveAverage) * .06;
+    const target = Math.max(0, Math.min(1, rms * .64 + (rms - waveAverage) * 2.2));
+    waveLevel += (target - waveLevel) * (target > waveLevel ? .82 : .48);
+    const now = performance.now();
+    waveSamples.push({ at: now, level: waveLevel });
+    while (waveSamples.length > 64 || now - waveSamples[0].at > WAVE_WINDOW_MS + 500) waveSamples.shift();
+  }
+  requestPanelFrame();
+}
 
 const MEDIA_HTML = `
   <div class="m-top">
     <div class="art-wrap"><img class="art" alt=""><div class="art-ph">♪</div></div>
     <div class="m-text"><div class="m-app">Media</div><div class="m-title">Nothing playing</div><div class="m-artist">Start something on the PC</div></div>
   </div>
-  <div class="m-wave"><i style="--h:59%;--d:0.2s"></i><i style="--h:68%;--d:0.0s"></i><i style="--h:27%;--d:0.8s"></i><i style="--h:30%;--d:0.5s"></i><i style="--h:92%;--d:0.0s"></i><i style="--h:82%;--d:0.3s"></i><i style="--h:22%;--d:0.1s"></i><i style="--h:73%;--d:0.6s"></i><i style="--h:26%;--d:0.3s"></i><i style="--h:29%;--d:0.8s"></i><i style="--h:72%;--d:0.0s"></i><i style="--h:90%;--d:0.1s"></i><i style="--h:46%;--d:0.9s"></i><i style="--h:25%;--d:0.9s"></i><i style="--h:92%;--d:0.6s"></i><i style="--h:24%;--d:0.3s"></i><i style="--h:23%;--d:0.8s"></i><i style="--h:35%;--d:0.4s"></i><i style="--h:71%;--d:0.2s"></i><i style="--h:87%;--d:0.1s"></i><i style="--h:91%;--d:0.4s"></i><i style="--h:89%;--d:0.2s"></i><i style="--h:31%;--d:0.9s"></i><i style="--h:91%;--d:0.3s"></i><i style="--h:65%;--d:0.1s"></i><i style="--h:88%;--d:0.1s"></i><i style="--h:90%;--d:0.0s"></i><i style="--h:97%;--d:0.3s"></i><i style="--h:81%;--d:0.8s"></i><i style="--h:72%;--d:0.5s"></i><i style="--h:77%;--d:0.9s"></i><i style="--h:76%;--d:0.5s"></i><i style="--h:56%;--d:0.3s"></i><i style="--h:41%;--d:0.3s"></i><i style="--h:28%;--d:0.9s"></i><i style="--h:56%;--d:0.8s"></i><i style="--h:81%;--d:0.5s"></i><i style="--h:75%;--d:0.4s"></i><i style="--h:95%;--d:0.1s"></i><i style="--h:33%;--d:0.8s"></i><i style="--h:71%;--d:0.2s"></i><i style="--h:61%;--d:0.2s"></i><i style="--h:80%;--d:0.6s"></i><i style="--h:23%;--d:0.1s"></i><i style="--h:89%;--d:0.9s"></i><i style="--h:58%;--d:0.5s"></i><i style="--h:62%;--d:0.9s"></i><i style="--h:81%;--d:0.9s"></i><i style="--h:76%;--d:0.1s"></i><i style="--h:29%;--d:0.4s"></i><i style="--h:78%;--d:0.1s"></i><i style="--h:25%;--d:0.4s"></i><i style="--h:100%;--d:0.9s"></i><i style="--h:75%;--d:0.4s"></i><i style="--h:67%;--d:0.5s"></i><i style="--h:20%;--d:0.7s"></i></div>
+  <canvas class="m-wave" aria-hidden="true"></canvas>
   <div class="m-progress"><div class="bar"><div class="fill"></div></div><div class="times"><span class="m-pos">0:00</span><span class="m-dur">0:00</span></div></div>
   <div class="m-controls">
     <button class="ic" data-media="prev" aria-label="Previous"><svg viewBox="0 0 24 24"><path d="M6 5h2v14H6zM20 5v14L9.5 12z"/></svg></button>
@@ -375,11 +473,10 @@ const MEDIA_HTML = `
 const Q_STYLE = { claude: { color: '#d97757', logo: '✳' }, codex: { color: '#e5e7eb', logo: '◎' } };
 
 function fmtReset(ts) {
-  if (!ts) return '';
-  const d = new Date(ts);
-  const hm = d.toLocaleTimeString(LOCALE, { hour: '2-digit', minute: '2-digit' });
-  const day = d.toDateString() === new Date().toDateString() ? hm : d.toLocaleDateString(LOCALE, { weekday: 'short' }) + ' ' + hm;
-  return `${day} · in ${fmtDur(ts - Date.now())}`;
+  if (!ts) return 'Sıfırlanma saati bilinmiyor';
+  return 'Sıfırlanma · ' + new Date(ts).toLocaleString(LOCALE, {
+    day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit',
+  });
 }
 
 /** Compares the share of the quota used with the share of the window elapsed. */
@@ -763,14 +860,122 @@ W.forecast = {
 };
 
 W.media = {
-  needs: ['state', 'fast'],
+  needs: ['state'],
   create(box) {
     box.innerHTML = MEDIA_HTML;
     const q = (s) => box.querySelector(s);
     const img = q('.art'), vol = q('.volr');
-    let artId = -1, volTimer = 0;
-    img.addEventListener('load', () => { img.classList.add('on'); setAmbient(averageColor(img)); });
-    img.addEventListener('error', () => img.classList.remove('on'));
+    const wave = q('.m-wave');
+    const progress = q('.fill'), position = q('.m-pos');
+    const g = wave.getContext('2d');
+    let levels = new Float32Array(0);
+    let artKey = '', artAttempt = 0, nextArtTry = 0, volTimer = 0;
+    let waveColor = DEFAULT_AMBIENT;
+    let ink, glow, paintColor, wasMoving, lastWavePaint = -Infinity, lastProgress = -Infinity, lastPosition = -1;
+    let waveWidth = 0, waveHeight = 0, waveGain = 1;
+    const waveSize = new ResizeObserver(([entry]) => {
+      waveWidth = Math.round(entry.contentRect.width);
+      waveHeight = Math.round(entry.contentRect.height);
+      requestPanelFrame();
+    });
+    waveSize.observe(wave);
+    // Mirrored pill bars that flow outward from the centre: the middle bar is "now", bars further out are
+    // older. Bars are tinted with the cover colour, brightest in the middle, and fade out towards both edges.
+    const paintWave = now => {
+      const latest = waveSamples.at(-1);
+      const moving = !!(media?.playing && media.app === 'Spotify' && latest && now - latest.at < 350);
+      const dpr = Math.min(2, window.devicePixelRatio || 1);
+      const w = Math.round(waveWidth * dpr), ht = Math.round(waveHeight * dpr);
+      if (!w || !ht) return false;
+      const resized = wave.width !== w || wave.height !== ht;
+      if (moving && wasMoving && !resized && paintColor === waveColor && now - lastWavePaint < 33) return true;
+      lastWavePaint = now;
+      if (resized) { wave.width = w; wave.height = ht; }
+      if (resized || paintColor !== waveColor) {
+        paintColor = waveColor;
+        const light = waveColor.split(',').map((v) => Math.round((+v + 255 * 1.5) / 2.5)).join(',');
+        ink = g.createLinearGradient(0, 0, w, 0);
+        ink.addColorStop(0, `rgba(${waveColor},0)`);
+        ink.addColorStop(.2, `rgba(${waveColor},.45)`);
+        ink.addColorStop(.42, `rgba(${waveColor},.95)`);
+        ink.addColorStop(.5, `rgba(${light},1)`);
+        ink.addColorStop(.58, `rgba(${waveColor},.95)`);
+        ink.addColorStop(.8, `rgba(${waveColor},.45)`);
+        ink.addColorStop(1, `rgba(${waveColor},0)`);
+        glow = `rgba(${waveColor},.55)`;
+      } else if (!moving && wasMoving === false) {
+        return false;
+      }
+      wasMoving = moving;
+      g.clearRect(0, 0, w, ht);
+      const center = ht / 2, mid = w / 2;
+      const barW = Math.max(2, Math.round(3.5 * dpr)), pitch = barW + Math.round(4 * dpr);
+      const half = Math.max(1, Math.floor((mid - barW) / pitch));
+      if (levels.length !== half + 1) levels = new Float32Array(half + 1);
+      if (moving) {
+        // Bar k shows the level k steps back in time. The short buffer absorbs network jitter.
+        const span = WAVE_WINDOW_MS / half;
+        // Auto gain: quiet tracks or a low Spotify volume would otherwise leave the bars as flat dots.
+        let peak = 0;
+        for (const p of waveSamples) peak = Math.max(peak, p.level);
+        waveGain += (.9 / Math.max(.04, peak) - waveGain) * .08;
+        let s = waveSamples.length - 1;
+        for (let k = 0; k <= half; k++) {
+          const at = now - WAVE_BUFFER_MS - k * span;
+          while (s > 0 && waveSamples[s].at > at) s--;
+          const a = waveSamples[s], b = waveSamples[s + 1];
+          if (at < a.at) levels[k] = 0;
+          else if (!b) levels[k] = a.level;
+          else levels[k] = a.level + (b.level - a.level) * (at - a.at) / (b.at - a.at);
+          levels[k] = Math.min(1, levels[k] * waveGain);
+        }
+      } else {
+        levels.fill(0);
+      }
+      const bar = (x, h) => {
+        const y = center - h / 2;
+        if (g.roundRect) g.roundRect(x, y, barW, h, barW / 2);
+        else g.rect(x, y, barW, h);
+      };
+      g.beginPath();
+      for (let k = 0; k <= half; k++) {
+        const taper = 1 - .3 * (k / half) ** 2; // older bars settle a little lower
+        const h = Math.max(barW, Math.pow(levels[k], .85) * taper * ht * .94);
+        bar(mid - barW / 2 - k * pitch, h);
+        if (k) bar(mid - barW / 2 + k * pitch, h);
+      }
+      g.fillStyle = ink;
+      g.shadowColor = glow;
+      g.shadowBlur = moving ? 10 * dpr : 0;
+      g.globalAlpha = moving ? 1 : .45;
+      g.fill();
+      g.globalAlpha = 1;
+      return moving;
+    };
+    const clearCover = () => {
+      img.classList.remove('on');
+      img.removeAttribute('src');
+      box.style.removeProperty('--media-cover');
+      waveColor = DEFAULT_AMBIENT;
+      requestPanelFrame();
+      setAmbient(null);
+    };
+    img.addEventListener('load', () => {
+      if (!img.naturalWidth) return;
+      img.classList.add('on');
+      nextArtTry = Infinity;
+      const art = coverStyle(img);
+      if (art) {
+        waveColor = art.rgb;
+        box.style.setProperty('--media-cover', `url("${art.backdrop}")`);
+        requestPanelFrame();
+        setAmbient(art.rgb);
+      }
+    });
+    img.addEventListener('error', () => {
+      img.classList.remove('on');
+      if (artKey) nextArtTry = performance.now() + 2500;
+    });
     box.querySelectorAll('[data-media]').forEach((btn) => btn.addEventListener('click', async () => {
       haptic();
       const action = btn.dataset.media;
@@ -778,6 +983,7 @@ W.media = {
         media.playing = !media.playing; // optimistic update
         media.at = performance.now();
         box.classList.toggle('playing', media.playing);
+        requestPanelFrame();
       }
       try { await api('/media/' + action, 'POST'); } catch (_) {}
     }));
@@ -787,6 +993,7 @@ W.media = {
       const ms = Math.round(((e.clientX - r.left) / r.width) * media.durMs);
       haptic();
       media.posMs = ms; media.at = performance.now();
+      requestPanelFrame();
       try { await api('/media/seek?ms=' + ms, 'POST'); } catch (_) {}
     });
     const paintVol = (v) => { vol.style.setProperty('--p', v + '%'); q('.vol-val').textContent = v; };
@@ -803,14 +1010,20 @@ W.media = {
     });
 
     return {
-      update(kind) {
-        if (kind === 'fast') {
-          if (!media || !(media.durMs > 0)) return;
-          const pos = Math.min(media.durMs, media.posMs + (media.playing ? performance.now() - media.at : 0));
-          q('.fill').style.width = (pos / media.durMs) * 100 + '%';
-          q('.m-pos').textContent = fmtTime(pos);
-          return;
+      destroy() { waveSize.disconnect(); },
+      frame(now) {
+        const moving = paintWave(now);
+        if (media?.durMs > 0 && (!media.playing || now - lastProgress >= 100)) {
+          lastProgress = now;
+          const pos = Math.min(media.durMs, Math.max(0, media.posMs + (media.playing ? now - media.at : 0)));
+          progress.style.width = (pos / media.durMs) * 100 + '%';
+          const second = Math.floor(pos / 1000);
+          if (second !== lastPosition) { lastPosition = second; position.textContent = fmtTime(pos); }
         }
+        return moving || !!(media?.playing && media.durMs > 0);
+      },
+      update() {
+        lastProgress = -Infinity;
         const m = D.state?.media, a = D.state?.audio;
         if (a) {
           box.classList.toggle('muted-on', !!a.muted);
@@ -822,9 +1035,10 @@ W.media = {
           q('.m-app').textContent = 'Media';
           q('.m-title').textContent = 'Nothing playing';
           q('.m-artist').textContent = 'Press ▶ to resume';
-          q('.fill').style.width = '0';
-          q('.m-pos').textContent = q('.m-dur').textContent = '0:00';
-          if (artId !== 0) { artId = 0; img.classList.remove('on'); setAmbient(null); }
+          progress.style.width = '0';
+          lastPosition = -1;
+          position.textContent = q('.m-dur').textContent = '0:00';
+          if (artKey) { artKey = ''; clearCover(); }
           return;
         }
         box.classList.toggle('playing', m.playing);
@@ -832,10 +1046,15 @@ W.media = {
         q('.m-title').textContent = m.title || 'Unknown track';
         q('.m-artist').textContent = [m.artist, m.album].filter(Boolean).join(' · ') || '—';
         q('.m-dur').textContent = fmtTime(m.durMs);
-        if (m.artId !== artId) {
-          artId = m.artId;
-          if (m.artId) img.src = `${API}/art?id=${m.artId}`;
-          else { img.classList.remove('on'); setAmbient(null); }
+        const key = m.artId ? JSON.stringify([m.app, m.title, m.artist, m.album, m.artId]) : '';
+        if (key !== artKey) {
+          artKey = key;
+          nextArtTry = 0;
+          clearCover();
+        }
+        if (artKey && performance.now() >= nextArtTry) {
+          nextArtTry = Infinity;
+          img.src = `${API}/art?id=${m.artId}&try=${++artAttempt}`;
         }
       },
     };
@@ -851,15 +1070,30 @@ W.stat = {
     const canvas = h('canvas');
     const val = h('b', null, '—'), unit = h('small'), sub = h('div', 't-sub', ' ');
     box.append(canvas, h('div', 't-label', m.label), h('div', 't-val', val, unit), sub);
+    if (o.metric === 'air') box.addEventListener('click', () => { haptic(); openAir(); });
+    if (o.metric === 'lamp') box.addEventListener('click', () => { haptic(); openLamp(); });
+    const motion = metricMotion(m, (v, u) => {
+      if (val.textContent !== v) val.textContent = v;
+      if (unit.textContent !== u) unit.textContent = u;
+    });
+    const draw = (now) => {
+      const s = D.state;
+      if (s) chart(canvas, [{ data: hist[m.hist || o.metric] || hist.cpu, color: c, max: m.max(s) }], { lag: histLag(now) });
+    };
     return {
+      // The sparkline is redrawn only on fresh data (update), not every frame: a 30 fps canvas
+      // redraw per tile kept the GPU busy and the tablet's Mali driver panics under that load.
+      frame(now) {
+        return motion.frame(now);
+      },
       update() {
         const s = D.state;
         if (!s) return;
-        const [v, u] = metricText(m, s);
-        val.textContent = v;
-        unit.textContent = u;
-        sub.textContent = m.sub?.(s) || ' ';
-        chart(canvas, [{ data: hist[m.hist || o.metric] || hist.cpu, color: c, max: m.max(s) }]);
+        motion.update(s);
+        box.classList.toggle('hot', !!m.hot?.(s));
+        const detail = m.sub?.(s) || ' ';
+        if (sub.textContent !== detail) sub.textContent = detail;
+        draw(performance.now());
       },
     };
   },
@@ -905,25 +1139,48 @@ W.chart = {
     const main = h('div', 's-main');
     const canvas = h('canvas');
     box.append(head, main, canvas);
+    const chip = h('span', 'chip');
+    const draw = (now) => {
+      const s = D.state;
+      if (s) chart(canvas, keys.map((k) => ({ data: hist[METRICS[k].hist || k], color: color(METRICS[k].color), max: METRICS[k].max(s) })), { grid: true, lag: histLag(now) });
+    };
+    const motions = keys.map(k => {
+      const m = METRICS[k], value = h('b', null, '—');
+      if (single) {
+        const unit = h('small');
+        main.append(value, unit, h('span', 'chips', chip));
+        return metricMotion(m, (v, u) => {
+          if (value.textContent !== v) value.textContent = v;
+          if (unit.textContent !== u) unit.textContent = u;
+        });
+      }
+      const entry = h('span', 'multi', k === 'down' ? '↓ ' : k === 'up' ? '↑ ' : m.label + ' ', value);
+      entry.style.color = color(m.color);
+      main.append(entry);
+      return metricMotion(m, (v, u) => {
+        const text = v + ' ' + u;
+        if (value.textContent !== text) value.textContent = text;
+      });
+    });
     return {
+      frame(now) { // chart redrawn in update() only (see W.stat)
+        let moving = false;
+        for (const motion of motions) if (motion.frame(now)) moving = true;
+        return moving;
+      },
       update() {
         const s = D.state;
         if (!s) return;
+        for (const motion of motions) motion.update(s);
         if (single) {
-          const [v, u] = metricText(single, s);
-          main.replaceChildren(h('b', null, v), h('small', null, u), h('span', 'chips', single.sub?.(s) ? h('span', 'chip', single.sub(s)) : ''));
+          const detail = single.sub?.(s) || '';
+          chip.hidden = !detail;
+          if (chip.textContent !== detail) chip.textContent = detail;
           head.lastChild.textContent = single.title?.(s) || '';
         } else {
-          main.replaceChildren(...keys.map((k) => {
-            const mm = METRICS[k];
-            const [v, u] = metricText(mm, s);
-            const e = h('span', 'multi', (k === 'down' ? '↓ ' : k === 'up' ? '↑ ' : mm.label + ' '), h('b', null, v + ' ' + u));
-            e.style.color = color(mm.color);
-            return e;
-          }));
           head.lastChild.textContent = isNet && s.ping ? `Ping ${s.ping.ms != null ? Math.round(s.ping.ms) + ' ms' : '—'} · loss ${s.ping.lossPct}%` : '';
         }
-        chart(canvas, keys.map((k) => ({ data: hist[METRICS[k].hist || k], color: color(METRICS[k].color), max: METRICS[k].max(s) })), { grid: true });
+        draw(performance.now());
       },
     };
   },
@@ -962,36 +1219,54 @@ W.quotas = {
   needs: ['quotas', 'tick'],
   create(box, { o }) {
     const want = Array.isArray(o.providers) ? o.providers : ['claude', 'codex'];
-    const grid = h('div', 'q-grid', h('div', 'empty', 'Quota data arrives once the computer is connected.'));
+    const grid = h('div', 'q-grid', h('div', 'empty', 'Kota verisi bekleniyor…'));
     box.append(grid);
     let last = 0;
     const render = () => {
       if (!D.quotas) return;
-      const list = quotaProviders().filter((p) => want.includes(p.id));
       grid.replaceChildren();
-      if (!list.length) { grid.appendChild(h('div', 'empty', 'No quota providers enabled')); return; }
-      for (const p of list) {
-        const st = Q_STYLE[p.id] || { color: '#94a3b8', logo: '●' };
+      const now = Date.now();
+      for (const id of want) {
+        const p = quotaProviders().find(item => item.id === id);
+        const st = Q_STYLE[id] || { color: '#94a3b8', logo: '●' };
+        const name = p?.name || (id === 'claude' ? 'Claude' : id === 'codex' ? 'Codex' : id);
         const card = h('div', 'q-card');
         card.style.setProperty('--q', st.color);
-        card.style.flex = String(Math.max(1, p.limits.length) + 0.3);
-        card.appendChild(h('div', 'q-head', h('span', 'q-logo', st.logo), h('span', 'q-name', p.name), h('span', 'q-plan', p.plan),
-          p.updatedAt ? h('span', 'q-upd', fmtDur(Date.now() - p.updatedAt) + ' ago') : null));
-        const rings = h('div', 'q-rings');
-        for (const l of p.limits) {
-          const pace = paceInfo(l);
-          const dial = h('div', 'q-dial');
-          if (l.percent >= 95 || l.severity === 'critical') dial.style.setProperty('--qc', '#ef4444');
-          else if (l.percent >= 80 || l.severity === 'warning') dial.style.setProperty('--qc', '#f59e0b');
-          dial.innerHTML = ringSvg(l.percent, pace?.elapsed); // numbers only
-          dial.appendChild(h('div', 'q-pct', String(Math.round(l.percent)), h('small', null, '%')));
-          rings.appendChild(h('div', 'q-ring', dial, h('div', 'q-label', l.label), h('div', 'q-reset', fmtReset(l.resetsAt)),
-            pace ? h('div', 'q-pace ' + pace.cls, pace.text) : null));
+        const source = p?.source === 'session' ? 'Oturum kaydı'
+          : p?.error || !p?.updatedAt ? 'Veri bekleniyor' : now - p.updatedAt > 300_000 ? 'Son ölçüm' : 'Canlı veri';
+        card.append(h('div', 'q-head', h('span', 'q-logo', st.logo), h('span', 'q-name', name),
+          p?.plan && p.plan !== name ? h('span', 'q-plan', p.plan) : null),
+          h('div', 'q-upd', source + (p?.updatedAt ? ' · ' + new Date(p.updatedAt).toLocaleTimeString(LOCALE, { hour: '2-digit', minute: '2-digit' }) : '')));
+        const rows = h('div', 'q-rows');
+        for (const l of p?.limits || []) {
+          const label = l.label.replace(/^5-hour(?: session)?$/, '5 saatlik').replace(/^Weekly/, 'Haftalık');
+          const row = h('div', 'q-row');
+          if (!Number.isFinite(l.percent) || (l.resetsAt && l.resetsAt <= now)) {
+            row.append(h('div', 'q-label', label), h('div', 'q-reset', 'Yeni dönem verisi bekleniyor'));
+          } else {
+            const used = Math.round(Math.max(0, Math.min(100, l.percent)));
+            const remaining = 100 - used;
+            const fill = h('div', 'q-fill');
+            fill.style.width = remaining + '%';
+            if (remaining <= 5) fill.style.setProperty('--qc', '#f87171');
+            else if (remaining <= 20) fill.style.setProperty('--qc', '#fbbf24');
+            const bar = h('div', 'q-track', fill);
+            bar.setAttribute('role', 'progressbar');
+            bar.setAttribute('aria-label', label + ' kalan kota');
+            bar.setAttribute('aria-valuenow', String(remaining));
+            row.append(h('div', 'q-row-head', h('div', 'q-label', label), h('strong', 'q-left', '%' + remaining + ' kaldı')),
+              bar, h('div', 'q-row-meta', h('span', null, '%' + used + ' kullanıldı'), h('span', null, fmtReset(l.resetsAt))));
+          }
+          rows.append(row);
         }
-        if (!p.limits.length) rings.appendChild(h('div', 'q-reset', 'No data'));
-        card.append(rings, h('div', 'q-foot', h('span', null, p.extra || ''), p.error ? h('span', 'q-err', p.error) : h('span')));
-        grid.appendChild(card);
+        const login = p?.error?.includes('Token expired') || p?.error?.includes('signed in') || p?.error?.includes('HTTP 401');
+        const message = login ? 'Claude Code’da /usage aç veya /login ile oturumu yenile.'
+          : p?.error ? 'Kota verisi şu anda alınamıyor.' : 'Kota verisi bekleniyor.';
+        if (!rows.childElementCount || p?.error) rows.append(h('div', 'q-message', message));
+        card.append(rows);
+        grid.append(card);
       }
+      if (!want.length) grid.append(h('div', 'empty', 'Kota sağlayıcısı seçilmedi.'));
     };
     return {
       update(kind) {
@@ -1340,6 +1615,99 @@ W.command = {
   },
 };
 
+// ---------------------------------------------------------------- grok: Documents\grok-kutu\ozet.md (push key "grok", okx_bridge grok_loop)
+const GROK_STALE = 6 * 3600_000;
+function grokInline(t) {
+  const out = [];
+  String(t).split(/(\*\*[^*]+\*\*)/).forEach((p) => {
+    if (p.startsWith('**') && p.endsWith('**') && p.length > 4) out.push(h('b', null, p.slice(2, -2)));
+    else if (p) out.push(document.createTextNode(p));
+  });
+  return out;
+}
+function grokBody(text) {
+  const body = h('div', 'grok-b');
+  for (const raw of String(text || '').split(/\r?\n/)) {
+    const l = raw.trim();
+    if (!l || /^[-*_]{3,}$/.test(l)) continue;
+    const m = l.match(/^(#{1,6})\s+(.*)$/);
+    if (m) { body.append(h('div', 'grok-h', ...grokInline(m[2]))); continue; }
+    const li = l.match(/^(?:[-*•]|\d+[.)])\s+(.*)$/);
+    if (li) { body.append(h('div', 'grok-li', ...grokInline(li[1]))); continue; }
+    body.append(h('div', 'grok-p', ...grokInline(l)));
+  }
+  return body;
+}
+let grokOpen = false;
+function grokSub() { const m = Number(D.push.grok?.data?.mtime) || D.push.grok?.at; return m ? 'güncellendi ' + ago(m) : 'özet yok'; }
+function paintGrok() {
+  if (!grokOpen) return;
+  $('gsSub').textContent = grokSub();
+  const t = D.push.grok?.data?.text;
+  const b = grokBody(t || 'Özet yok. Grok, Belgeler/grok-kutu/ozet.md dosyasına yazınca burada görünür.');
+  $('gsBody').replaceChildren(...b.childNodes);
+}
+function openGrok() { grokOpen = true; $('gSheet').hidden = false; $('gsBody').scrollTop = 0; paintGrok(); }
+function closeGrok() { grokOpen = false; $('gSheet').hidden = true; }
+$('gsClose').addEventListener('click', () => { haptic(); closeGrok(); });
+W.grok = {
+  needs: ['push', 'tick'],
+  create(box, { o, w }) {
+    const key = o.key || 'grok';
+    const compact = (w?.h || 9) <= 2;
+    let lastAt = -1, sub = null, mtime = 0;
+    box.addEventListener('click', () => { haptic(); openGrok(); });
+    const age = () => {
+      if (!sub) return;
+      sub.textContent = mtime ? (compact ? ago(mtime) : 'güncellendi ' + ago(mtime)) : '';
+      box.classList.toggle('grok-stale', !mtime || Date.now() - mtime > GROK_STALE);
+    };
+    const render = () => {
+      const item = D.push[key];
+      if (!item) {
+        if (lastAt === 0) return;
+        lastAt = 0; sub = null;
+        box.classList.add('grok-stale');
+        box.replaceChildren(h('div', 'w-title', o.title || 'Grok özeti'),
+          h('div', 'push-empty', 'Özet yok', h('code', null, 'Belgeler/grok-kutu/ozet.md')));
+        return;
+      }
+      if (item.at === lastAt) { age(); return; }
+      lastAt = item.at;
+      const d = item.data || {};
+      mtime = Number(d.mtime) || item.at;
+      sub = h('span', 'w-sub', '');
+      const title = h('div', 'w-title', '🛰️ ' + (o.title || d.title || 'Grok özeti'), sub);
+      if (compact) {
+        // Three headlines, each one whole sentence. A "## Ana sayfa" section in ozet.md wins; otherwise the first
+        // sentence of the top "Öne çıkanlar" bullets (Grok lists them by importance), without the price line
+        // (the tiles show prices), sources, times or bracketed details.
+        const secs = {}; let sec = '';
+        for (const raw of String(d.text || '').split(/\r?\n/)) {
+          const l = raw.trim(), hd = l.match(/^#{2,}\s*(.+)$/);
+          if (hd) { sec = hd[1].toLowerCase(); continue; }
+          if (/^(?:[-*•]|\d+[.)])\s+/.test(l)) (secs[sec] ||= []).push(l.replace(/^(?:[-*•]|\d+[.)])\s+/, ''));
+        }
+        const pick = Object.keys(secs).find((k) => /ana ?sayfa|kısa/.test(k))
+          || Object.keys(secs).find((k) => /öne çıkan/.test(k)) || Object.keys(secs)[0];
+        const lines = (secs[pick] || [])
+          .map((l) => l.replace(/\*\*/g, '').replace(/\s+[—–]\s+.*$/, '').replace(/\s*\([^)]*\)/g, '')
+            .split(/;\s+|\.\s+(?=[A-ZÇĞİÖŞÜ0-9@])/)[0].replace(/[.;,:\s]+$/, ''))
+          .filter((l) => l && !/^[^:]{0,24}fiyat[^:]{0,12}:/i.test(l)).slice(0, 3);
+        const item = (l) => {
+          const m = l.match(/^([^:]{2,18}):\s*(.+)$/);
+          return h('div', 'grok-cl', h('span', 'grok-t', m ? [h('b', null, m[1]), ' ' + m[2]] : l));
+        };
+        box.replaceChildren(title, h('div', 'grok-c', lines.map(item)));
+      } else box.replaceChildren(title, grokBody(d.text));
+      age();
+      paintGrok();
+    };
+    render();
+    return { update: render };
+  },
+};
+
 W.push = {
   needs: ['push', 'tick'],
   create(box, { o }) {
@@ -1359,7 +1727,8 @@ W.push = {
       lastAt = item.at;
       const v = pushView(item);
       const lvl = levelOf(v);
-      const c = v.color || LEVEL_COLOR[lvl] || '';
+      box.classList.toggle('px-alert', item.data?.alert === true);
+      const c = typeof v.color === 'string' && CSS.supports('color', v.color) ? v.color : LEVEL_COLOR[lvl] || '';
       if (c) box.style.setProperty('--c', c); else box.style.removeProperty('--c');
       const unit = v.unit ?? o.unit ?? '';
       const style = o.style && o.style !== 'auto' ? o.style : v.items ? 'list' : 'big';
@@ -1389,12 +1758,29 @@ W.push = {
         body = h('div', 'push-big', h('div', 'pv', fmtValue(v.value), unit ? h('small', null, unit) : null),
           v.sub ? h('div', 'ps', String(v.sub)) : null,
           v.progress != null ? h('div', 'track', h('i')) : null);
-        if (Array.isArray(v.spark) && v.spark.length > 1) {
-          const a = v.spark.map(Number), mn = Math.min(...a), mx = Math.max(...a), r = mx - mn || 1, n = a.length - 1;
+        const a = Array.isArray(v.spark) ? v.spark.slice(-240)
+          .filter(x => typeof x === 'number' || typeof x === 'string').map(Number).filter(Number.isFinite) : [];
+        if (a.length > 1) {
+          const mn = Math.min(...a), mx = Math.max(...a), r = mx - mn || 1, n = a.length - 1;
           const pts = a.map((y, i) => `${(i / n * 100).toFixed(1)},${(30 - (y - mn) / r * 28).toFixed(1)}`).join(' ');
           const sp = h('div', 'push-spark');
           const col = c || 'var(--cpu)';
-          sp.innerHTML = `<svg viewBox="0 0 100 32" preserveAspectRatio="none"><polyline points="0,32 ${pts} 100,32" fill="${col}" fill-opacity=".14"/><polyline points="${pts}" fill="none" stroke="${col}" stroke-width="2" vector-effect="non-scaling-stroke"/></svg>`;
+          const ns = 'http://www.w3.org/2000/svg';
+          const svg = document.createElementNS(ns, 'svg');
+          svg.setAttribute('viewBox', '0 0 100 32');
+          svg.setAttribute('preserveAspectRatio', 'none');
+          const fill = document.createElementNS(ns, 'polyline');
+          fill.setAttribute('points', '0,32 ' + pts + ' 100,32');
+          fill.setAttribute('fill', col);
+          fill.setAttribute('fill-opacity', '.14');
+          const line = document.createElementNS(ns, 'polyline');
+          line.setAttribute('points', pts);
+          line.setAttribute('fill', 'none');
+          line.setAttribute('stroke', col);
+          line.setAttribute('stroke-width', '2');
+          line.setAttribute('vector-effect', 'non-scaling-stroke');
+          svg.append(fill, line);
+          sp.append(svg);
           body.appendChild(sp);
         }
         const bar = body.querySelector('.track i');
@@ -1403,9 +1789,176 @@ W.push = {
       box.className = box.className.replace(/\bps-\w+/g, '') + ' ps-' + style;
       box.replaceChildren(title, body);
     };
+    if (/^px_/.test(key)) box.addEventListener('click', () => { haptic(); openChart(key.replace(/^px_/, 'chart_')); });
     return { update: render };
   },
 };
+
+// ---------------------------------------------------------------- air purifier sheet (push "air" in, push "air_cmd" out)
+// The bridge (extras/bridge/okx_bridge.py + miio_air.py) polls "air_cmd" every second and runs it on the purifier.
+let airOpen = false, airWant = null;
+function openAir() { airOpen = true; $('aSheet').hidden = false; paintAir(); }
+function closeAir() { airOpen = false; $('aSheet').hidden = true; }
+function paintAir() {
+  if (!airOpen) return;
+  const a = { ...(airOf() || {}), ...(airWant || {}) }, has = airOf() != null;
+  $('asPm').textContent = has ? a.pm25 : '—';
+  $('asInfo').textContent = has ? `Nem %${a.hum} · ${r1(a.temp)}°C · Filtre %${a.filter}` : 'Cihazdan veri yok';
+  $('asSub').textContent = has ? (a.on ? 'Açık' : 'Kapalı') : '';
+  $('asPower').classList.toggle('on', !!a.on);
+  [...$('asModes').children].forEach((b) => b.classList.toggle('on', !!a.on && b.dataset.m === a.mode));
+  $('asLvl').textContent = a.fav ?? '—';
+}
+async function airCmd(cmd, want) {
+  haptic();
+  airWant = { ...(airWant || {}), ...want };
+  paintAir();
+  try {
+    // the APK's request proxy drops POST bodies, so the command rides in ?value=
+    await fetch(API + '/push/air_cmd?ttl=60&value=' + encodeURIComponent(cmd), { method: 'POST', cache: 'no-store' });
+  } catch (_) {}
+  clearTimeout(airCmd.t);
+  airCmd.t = setTimeout(() => { airWant = null; paintAir(); }, 6000);  // by then the bridge has pushed the real state
+}
+$('asClose').addEventListener('click', () => { haptic(); closeAir(); });
+$('asPower').addEventListener('click', () => { const on = !({ ...airOf(), ...airWant }).on; airCmd(on ? 'on' : 'off', { on }); });
+$('asModes').addEventListener('click', (e) => { const m = e.target.dataset?.m; if (m) airCmd(m, { on: true, mode: m }); });
+const airLvl = (d) => { const v = Math.max(1, Math.min(14, (({ ...airOf(), ...airWant }).fav || 7) + d)); airCmd('favorite ' + v, { on: true, mode: 'favorite', fav: v }); };
+$('asMinus').addEventListener('click', () => airLvl(-1));
+$('asPlus').addEventListener('click', () => airLvl(1));
+
+// ---------------------------------------------------------------- Tapo lamp sheet (push "lamp" in, push "lamp_cmd" out)
+// The bridge (extras/bridge/okx_bridge.py + tapo_lamp.py) polls "lamp_cmd" every second and runs it on the bulb.
+let lampOpen = false, lampWant = null;
+function openLamp() { lampOpen = true; $('lSheet').hidden = false; paintLamp(); }
+function closeLamp() { lampOpen = false; $('lSheet').hidden = true; }
+function paintLamp() {
+  if (!lampOpen) return;
+  const l = { ...(lampOf() || {}), ...(lampWant || {}) }, has = lampOf() != null;
+  $('lsBr').textContent = has ? (l.on ? l.bright + '%' : 'Kapalı') : '—';
+  $('lsSub').textContent = has ? (l.on ? 'Açık' : 'Kapalı') : 'Ampulden veri yok';
+  $('lsPower').classList.toggle('on', !!l.on);
+  [...$('lsTemps').children].forEach((b) => b.classList.toggle('on', !!l.on && Math.abs(+b.dataset.k - (l.temp || 0)) < 300));
+}
+async function lampCmd(cmd, want) {
+  haptic();
+  lampWant = { ...(lampWant || {}), ...want };
+  paintLamp();
+  try {
+    // the APK's request proxy drops POST bodies, so the command rides in ?value=
+    await fetch(API + '/push/lamp_cmd?ttl=60&value=' + encodeURIComponent(cmd), { method: 'POST', cache: 'no-store' });
+  } catch (_) {}
+  clearTimeout(lampCmd.t);
+  lampCmd.t = setTimeout(() => { lampWant = null; paintLamp(); }, 6000);  // by then the bridge has pushed the real state
+}
+$('lsClose').addEventListener('click', () => { haptic(); closeLamp(); });
+$('lsPower').addEventListener('click', () => { const on = !({ ...lampOf(), ...lampWant }).on; lampCmd(on ? 'on' : 'off', { on }); });
+$('lsTemps').addEventListener('click', (e) => { const k = +e.target.dataset?.k; if (k) lampCmd('temp ' + k, { on: true, temp: k }); });
+const lampBr = (d) => { const v = Math.max(1, Math.min(100, Math.round((({ ...lampOf(), ...lampWant }).bright || 50) / 10) * 10 + d)); lampCmd('bright ' + v, { on: true, bright: v }); };
+$('lsMinus').addEventListener('click', () => lampBr(-10));
+$('lsPlus').addEventListener('click', () => lampBr(10));
+
+// ---------------------------------------------------------------- price chart sheet (push key "chart_<coin>")
+const CH_BARS = [['1m', '1 dk'], ['5m', '5 dk'], ['15m', '15 dk'], ['1H', '1 saat'], ['4H', '4 saat'], ['1D', '1 gün']];
+let pxc = null;
+function openChart(key) {
+  pxc = { key, bar: store.get('chartBar') || '15m', kind: store.get('chartKind') || 'c', at: -1 };
+  $('csBars').replaceChildren(...CH_BARS.map(([b, l]) => {
+    const btn = h('button', b === pxc.bar ? 'on' : null, l);
+    btn.addEventListener('click', (e) => { e.stopPropagation(); haptic(); pxc.bar = b; store.set('chartBar', b); pxc.at = -1; paintChart(); });
+    return btn;
+  }));
+  $('cSheet').hidden = false;
+  paintChart();
+  pxc.timer = setInterval(paintChart, 5000);
+}
+function closeChart() { if (pxc) clearInterval(pxc.timer); pxc = null; $('cSheet').hidden = true; }
+$('csClose').addEventListener('click', () => { haptic(); closeChart(); });
+$('csKind').addEventListener('click', (e) => {
+  const k = e.target.dataset?.k; if (!k || !pxc) return;
+  haptic(); pxc.kind = k; store.set('chartKind', k); pxc.at = -1; paintChart();
+});
+function paintChart() {
+  if (!pxc) return;
+  const item = D.push[pxc.key];
+  const at = (item?.at || 0) + pxc.bar + pxc.kind + (D.push.kripto?.at || 0);
+  if (at === pxc.at) return;
+  pxc.at = at;
+  [...$('csBars').children].forEach((b, i) => b.classList.toggle('on', CH_BARS[i][0] === pxc.bar));
+  [...$('csKind').children].forEach((b) => b.classList.toggle('on', b.dataset.k === pxc.kind));
+  const d = item?.data || {};
+  const a = (d.bars || {})[pxc.bar] || [];
+  $('csTitle').textContent = (d.title || pxc.key.slice(6).toUpperCase()) + ' / USDT';
+  const cv = $('csCanvas'), dpr = Math.min(window.devicePixelRatio || 1, 2);
+  const W = cv.clientWidth, H = cv.clientHeight;
+  cv.width = W * dpr; cv.height = H * dpr;
+  const g = cv.getContext('2d');
+  g.setTransform(dpr, 0, 0, dpr, 0, 0);
+  g.clearRect(0, 0, W, H);
+  if (a.length < 2) { $('csSub').textContent = 'Veri bekleniyor…'; return; }
+  const first = a[0][1], last = a[a.length - 1][4], ch = (last / first - 1) * 100;
+  const lab = CH_BARS.find((x) => x[0] === pxc.bar)[1];
+  $('csSub').textContent = `${last.toFixed(last < 1 ? 5 : last < 100 ? 3 : 2)}  ·  ${ch >= 0 ? '+' : '−'}${Math.abs(ch).toFixed(2)}%  ·  ${a.length} × ${lab}`;
+  let lo = Infinity, hi = -Infinity;
+  for (const x of a) { if (x[3] < lo) lo = x[3]; if (x[2] > hi) hi = x[2]; }
+  // positions, pending orders and paper trades of this coin as horizontal levels
+  const coin = pxc.key.slice(6).toUpperCase(), k = D.push.kripto?.data || {}, lv = [];
+  for (const p of k.pos || []) if (p.coin === coin) { lv.push([+p.entry, 'Giriş', '#60a5fa']); if (p.liq) lv.push([+p.liq, 'Likidasyon', '#f97316']); }
+  for (const o of k.orders || []) if (o.coin === coin && o.px) lv.push([+o.px, (o.dir || 'Emir') + ' emri', '#a78bfa']);
+  for (const p of k.paper || []) if (p.coin === coin) {
+    lv.push([+p.entry, 'Kağıt giriş', '#60a5fa']);
+    if (p.stop) lv.push([+p.stop, 'Stop', '#ef4444']);
+    if (p.tp) lv.push([+p.tp, 'Hedef', '#22c55e']);
+  }
+  const reach = { '1m': .02, '5m': .03, '15m': .05, '1H': .08, '4H': .15, '1D': .3 }[pxc.bar] || .05;
+  const near = lv.filter(([v]) => Number.isFinite(v) && v > 0 && Math.abs(v / last - 1) <= reach);
+  const far = lv.filter(([v]) => Number.isFinite(v) && v > 0).length - near.length;
+  if (far) $('csSub').textContent += `  ·  ${far} seviye bu aralığın dışında`;
+  for (const [v] of near) { if (v < lo) lo = v; if (v > hi) hi = v; }
+  const pad = (hi - lo) * 0.06 || 1; lo -= pad; hi += pad;
+  const R = 70, B = 24, pw = W - R, ph = H - B;
+  const Y = (v) => (hi - v) / (hi - lo) * ph;
+  const step = pw / a.length;
+  g.font = '12px system-ui, sans-serif'; g.fillStyle = '#8b93a1'; g.strokeStyle = 'rgba(255,255,255,.07)'; g.lineWidth = 1;
+  const dec = hi < 1 ? 5 : hi < 100 ? 3 : 2;
+  for (let i = 0; i <= 4; i++) {
+    const v = lo + (hi - lo) * i / 4, y = Math.round(Y(v)) + .5;
+    g.beginPath(); g.moveTo(0, y); g.lineTo(pw, y); g.stroke();
+    g.fillText(v.toFixed(dec), pw + 6, y + 4);
+  }
+  const tf = pxc.bar === '1D' ? { day: '2-digit', month: '2-digit' } : pxc.bar === '4H' || pxc.bar === '1H' ? { day: '2-digit', month: '2-digit', hour: '2-digit' } : { hour: '2-digit', minute: '2-digit' };
+  for (let i = 0; i < a.length; i += Math.ceil(a.length / 6)) {
+    g.fillText(new Date(a[i][0] * 1000).toLocaleString('tr-TR', tf), i * step, H - 6);
+  }
+  if (pxc.kind === 'l') {
+    const col = ch >= 0 ? '#22c55e' : '#ef4444';
+    g.beginPath();
+    a.forEach((x, i) => { const px = i * step + step / 2, py = Y(x[4]); i ? g.lineTo(px, py) : g.moveTo(px, py); });
+    g.strokeStyle = col; g.lineWidth = 2; g.stroke();
+    g.lineTo((a.length - .5) * step, ph); g.lineTo(step / 2, ph); g.closePath();
+    g.globalAlpha = .12; g.fillStyle = col; g.fill(); g.globalAlpha = 1;
+  } else {
+    const bw = Math.max(1, step * .7);
+    for (let i = 0; i < a.length; i++) {
+      const [, o, hh, l, c] = a[i], x = i * step + step / 2;
+      g.strokeStyle = g.fillStyle = c >= o ? '#22c55e' : '#ef4444';
+      g.beginPath(); g.moveTo(Math.round(x) + .5, Y(hh)); g.lineTo(Math.round(x) + .5, Y(l)); g.stroke();
+      const y1 = Y(Math.max(o, c)), y2 = Y(Math.min(o, c));
+      g.fillRect(x - bw / 2, y1, bw, Math.max(1, y2 - y1));
+    }
+  }
+  for (const [v, label, col] of near) {
+    const y = Math.round(Y(v)) + .5;
+    g.setLineDash([8, 5]); g.strokeStyle = col; g.lineWidth = 1.5;
+    g.beginPath(); g.moveTo(0, y); g.lineTo(pw, y); g.stroke(); g.setLineDash([]);
+    g.fillStyle = col; g.fillText(`${label} ${v.toFixed(dec)}`, 6, y - 5);
+  }
+  const ly = Math.round(Y(last)) + .5;
+  g.setLineDash([4, 4]); g.strokeStyle = '#e5e7eb'; g.lineWidth = 1;
+  g.beginPath(); g.moveTo(0, ly); g.lineTo(pw, ly); g.stroke(); g.setLineDash([]);
+  g.fillStyle = '#e5e7eb'; g.fillRect(pw + 2, ly - 9, R - 4, 18);
+  g.fillStyle = '#0c0e12'; g.fillText(last.toFixed(dec), pw + 6, ly + 4);
+}
 
 // ---------------------------------------------------------------- kripto: KriptoBot/OKX dashboard (push key "kripto")
 const kf = (x, d) => {
@@ -2073,7 +2626,7 @@ W.image = {
 
 const WIDGET_ICONS = { clock: '🕒', weather: '⛅', forecast: '🌦️', media: '🎵', stat: '📈', gauge: '⏲️', chart: '📊', meters: '💾', quotas: '✳️', sessions: '🤖',
   github: '🐙', processes: '⚙️', shortcuts: '🎛️', button: '🔘', worldclock: '🌍', calendar: '📅', pomodoro: '🍅', countdown: '⏳', note: '📝', command: '💻',
-  push: '📡', inbox: '📬', label: '🔤', analog: '🕰️', progress: '📆', stopwatch: '⏱️', timer: '⏲️', counter: '🔢', breathe: '🫁', quote: '💬',
+  push: '📡', grok: '🛰️', inbox: '📬', label: '🔤', analog: '🕰️', progress: '📆', stopwatch: '⏱️', timer: '⏲️', counter: '🔢', breathe: '🫁', quote: '💬',
   checklist: '✅', battery: '🔋', topprocs: '🔥', quotaring: '🎯', volume: '🔊', sun: '🌅', air: '🍃', hackernews: '📰', exchange: '💱', crypto: '🪙', image: '🖼️' };
 
 // ================================================================= pages
@@ -2083,13 +2636,23 @@ let mounted = [];     // { pi, def, inst, ctx, dirty }
 let layoutKey = '';
 let curPage = 0;
 
+// The compact launcher footer is one key tall. With more keys than columns W.shortcuts wraps into extra
+// rows that would be clipped, so such a widget keeps the normal full-height grid row instead.
+function shortcutsFitOneRow(o) {
+  const all = cfg.shortcuts || [];
+  const ids = Array.isArray(o.ids) && o.ids.length ? o.ids : null;
+  const n = ids ? ids.filter((id) => all.some((s) => s.id === id)).length : all.length;
+  return n > 0 && n <= Math.min(8, Math.max(1, o.columns || 4));
+}
+
 function buildLayout() {
   const enabled = (cfg.pages || []).filter((p) => p.enabled !== false && Array.isArray(p.widgets));
   const next = enabled.length ? enabled : FALLBACK_PAGES;
   const key = JSON.stringify([next, cfg.shortcuts, cfg.display?.showSeconds]);
   if (key === layoutKey) return;
   layoutKey = key;
-  const prevId = pages[curPage]?.id;
+  // Keep the page you are on across rebuilds (config/layout pushes) and across WebView reloads.
+  const prevId = pages[curPage]?.id ?? store.get('page', null);
   pages = next;
   for (const m of mounted) { try { m.inst.destroy?.(); } catch (_) {} }
   mounted = [];
@@ -2101,7 +2664,18 @@ function buildLayout() {
       const def = W[w.type];
       if (!def) continue;
       const box = h('div', `w w-${w.type}${def.bare ? ' bare' : ' card'}`);
-      box.style.gridArea = `${w.y + 1} / ${w.x + 1} / span ${w.h} / span ${w.w}`;
+      if (p.id === 'home' && w.type === 'shortcuts' && w.x === 0 && w.y === 5 && w.w === 12 && w.h === 1 && shortcutsFitOneRow(w.options || {})) {
+        grid.classList.add('grid-with-launcher');
+        box.classList.add('w-shortcuts-footer');
+      }
+      if (PHONE || TABLET_WEB) {
+        // Phone browser: a scrolling grid (2 columns upright, 4 sideways) in the page's reading order.
+        box.style.order = String(w.y * 12 + w.x);
+        box.style.setProperty('--c2', String(w.w <= 4 ? 1 : 2));
+        box.style.setProperty('--c4', String(Math.min(4, Math.max(1, Math.round(w.w / 3)))));
+        box.style.setProperty('--r', String(w.h === 1 ? 2 : 4)); // big cards capped so most pages fit one screen
+      }
+      if (!PHONE) box.style.gridArea = `${w.y + 1} / ${w.x + 1} / span ${w.h} / span ${w.w}`;
       grid.appendChild(box);
       const ctx = { page: p, w, o: w.options || {}, box };
       let inst;
@@ -2134,6 +2708,7 @@ function emit(kind) {
     if (!m.def.needs.includes(kind)) continue;
     if (act.has(m.pi)) runUpdate(m, kind); else m.dirty = true;
   }
+  if (kind === 'state') requestPanelFrame();
 }
 
 function setActive(all = false) {
@@ -2144,7 +2719,27 @@ function setActive(all = false) {
       for (const k of m.def.needs) runUpdate(m, k);
     }
   }
+  requestPanelFrame();
 }
+
+let panelFrame = 0, lastPanelFrame = -Infinity;
+function requestPanelFrame() {
+  if (!panelFrame && !nightOn && !document.hidden) panelFrame = requestAnimationFrame(animatePanel);
+}
+
+function animatePanel(now) {
+  panelFrame = 0;
+  if (nightOn || document.hidden) return;
+  if (now - lastPanelFrame < 31) { requestPanelFrame(); return; }
+  lastPanelFrame = now;
+  let moving = false;
+  for (const m of mounted) {
+    if (m.pi === curPage && m.inst.frame?.(now)) moving = true;
+  }
+  if (moving) requestPanelFrame();
+}
+document.addEventListener('visibilitychange', requestPanelFrame);
+window.addEventListener('resize', requestPanelFrame);
 
 // ---------------------------------------------------------------- navigation: swipe, dots, overview, volume keys, agent events
 function buildDots() {
@@ -2205,6 +2800,7 @@ function onScroll() {
   const p = Math.round(pager.scrollLeft / window.innerWidth);
   if (p === curPage) return;
   curPage = p;
+  if (pages[p]) store.set('page', pages[p].id);
   updateDots();
   flashTitle();
   setActive();
@@ -2286,6 +2882,7 @@ function setNight(on) {
   nightOn = on;
   document.body.classList.toggle('night', on);
   applyBrightness(true);
+  if (!on) requestPanelFrame();
 }
 
 // ---------------------------------------------------------------- phone sensors
@@ -2326,7 +2923,7 @@ function tick() {
   if (darkSince && Date.now() - darkSince > 30_000) darkRoom = true;
   const dark = darkRoom && cfg.display?.nightWhenDark === true;
   setNight((isNight(now) || dark) && Date.now() > wakeUntil);
-  const idle = cfg.display?.idleReturnSec ?? 90;
+  const idle = cfg.display?.idleReturnSec ?? 0; // off unless set explicitly (0 = stay on the page)
   const held = ruleHold && curPage === ruleHold.page;
   if (idle > 0 && !held && Date.now() - lastTouch > idle * 1000 && (curPage !== 0 || sheet || !$('overview').hidden)) {
     closeSheet(); closeOverview(); goPage(0, true);
@@ -2346,19 +2943,21 @@ function applyDisplay() {
 }
 
 async function loadConfig() {
-  if (PREVIEW) return;
+  if (PREVIEW || cfgLoading) return;
+  cfgLoading = true;
   try {
     const r = await api('/config');
+    if (!Array.isArray(r?.config?.pages)) return;
     const before = JSON.stringify(cfg);
     cfg = { ...DEFAULT_CFG, ...r.config };
     cfgVersion = r.version;
+    store.set('cfg', cfg);
     if (JSON.stringify(cfg) !== before) {
-      store.set('cfg', cfg);
       buildLayout();
       applyDisplay();
       loadWeather();
     }
-  } catch (_) {}
+  } catch (_) {} finally { cfgLoading = false; }
 }
 
 async function loadQuotas() {
@@ -2383,6 +2982,8 @@ async function loadPush() {
   try {
     const r = await api('/push');
     D.push = r.items || {};
+    paintAir();
+    paintLamp();
     pushVersion = r.version;
     emit('push');
   } catch (_) {}
@@ -2401,7 +3002,7 @@ function applyState(s) {
   D.state = s;
   media = s.media ? { ...s.media, at: performance.now() } : null;
   setOnline(true);
-  if (s.cfgVersion !== undefined && cfgVersion !== null && s.cfgVersion !== cfgVersion) loadConfig();
+  if (s.cfgVersion !== undefined && s.cfgVersion !== cfgVersion) loadConfig();
   if (s.pushVersion !== undefined && s.pushVersion !== pushVersion) loadPush();
   if (evSeq != null) for (const e of s.events || []) if (e.seq > evSeq) handleEvent(e);
   evSeq = Math.max(evSeq ?? 0, s.evSeq ?? 0);
@@ -2410,6 +3011,11 @@ function applyState(s) {
   {
     const pc = s.pc;
     if (pc) {
+      const t = performance.now();
+      if (histAt) histGap = Math.min(3000, Math.max(250, histGap * 0.7 + (t - histAt) * 0.3));
+      histLag(t);
+      histOff = Math.min(2, histOff + 1);
+      histAt = t;
       pushHist('cpu', pc.cpu);
       pushHist('gpu', pc.gpu?.util);
       pushHist('ram', pc.ramUsedGb);
@@ -2419,6 +3025,8 @@ function applyState(s) {
       pushHist('ping', s.ping?.ms);
       pushHist('gputemp', pc.gpu?.temp);
       pushHist('cputemp', pc.cpuTemp);
+      pushHist('air', airOf()?.pm25);
+      pushHist('lamp', lampOf() ? (lampOf().on ? lampOf().bright : 0) : null);
     }
   }
   emit('state');
@@ -2433,6 +3041,7 @@ window.onAgentStream = (event, data) => {
   let d;
   try { d = JSON.parse(data); } catch (_) { return; }
   if (event === 'state') applyState(d);
+  else if (event === 'wave' && Array.isArray(d)) updateWave(d);
   else if (event === 'work') applyWork(d);
   else if (event === 'event' && d.seq > (evSeq ?? 0)) { evSeq = d.seq; handleEvent(d); }
 };
@@ -2440,7 +3049,10 @@ const streaming = () => streamOn && Date.now() - lastStateAt < 3000;
 
 async function poll() {
   if (!streaming()) {
-    try { applyState(await api('/state' + (evSeq != null ? '?ev=' + evSeq : ''))); }
+    try {
+      const state = await api('/state' + (evSeq != null ? '?ev=' + evSeq : ''));
+      if (!streaming()) applyState(state);
+    }
     catch (_) { if (!streaming()) setOnline(false); }
   }
   setTimeout(poll, 1000);

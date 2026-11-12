@@ -59,6 +59,9 @@ builder.Services.AddSingleton<CommandRunner>();
 builder.Services.AddSingleton<ApprovalStore>();
 AddMonitor<SystemMonitor>(builder.Services);
 AddMonitor<MediaMonitor>(builder.Services);
+#if WINDOWS
+AddMonitor<SpotifyWave>(builder.Services);
+#endif
 AddMonitor<QuotaMonitor>(builder.Services);
 AddMonitor<ProcessMonitor>(builder.Services);
 AddMonitor<SessionMonitor>(builder.Services);
@@ -75,7 +78,9 @@ var app = builder.Build();
 // path the phone uses; on the local port that is simply /api/... Routing runs after this, so it sees the new path.
 app.Use((ctx, next) =>
 {
-    if (ctx.Connection.LocalPort == Port && ctx.Request.Path.StartsWithSegments("/agent/api", out var rest))
+    // The Wi-Fi port also serves the panel to a phone browser (iPhone over Tailscale), which uses the same paths.
+    if ((ctx.Connection.LocalPort == Port || (lanCert is not null && ctx.Connection.LocalPort == lanCfg.Port))
+        && ctx.Request.Path.StartsWithSegments("/agent/api", out var rest))
         ctx.Request.Path = "/api" + rest;
     return next(ctx);
 });
@@ -101,13 +106,19 @@ app.Use(async (ctx, next) =>
     }
     else if (lanCert is not null && ctx.Connection.LocalPort == lanCfg.Port)
     {
-        // The phone's key opens the panel API; the separate webhook key opens only the webhook endpoints, in a header
-        // or, for senders that cannot set headers, in ?token= (URLs end up in logs, so it must not be the phone's key).
+        // The separate webhook key can submit values and notifications. Use headers to keep keys out of URLs.
         var lan = configStore.Get().Lan;
+        // A phone browser (no app) signs in once at /login and then carries the key in an HttpOnly cookie.
+        // Its own origin is the only one accepted; the panel files and the login page need no key.
+        var p = ctx.Request.Path;
+        var sameOrigin = origin == "" || origin == $"https://{ctx.Request.Host}";
+        var openPath = HttpMethods.IsGet(ctx.Request.Method)
+            && (p.StartsWithSegments("/panel") || p.StartsWithSegments("/login") || p.StartsWithSegments("/favicon.ico"));
+        var loginPost = HttpMethods.IsPost(ctx.Request.Method) && p.Equals("/login");
         var authorized = Lan.Matches(ctx.Request.Headers.Authorization, lan.Token!)
-            || (Lan.IsWebhook(ctx.Request.Path) && (Lan.Matches(ctx.Request.Headers.Authorization, lan.WebhookToken!)
-                || Lan.MatchesQuery(ctx.Request.Query["token"], lan.WebhookToken!)));
-        if (origin != "" || !Lan.AllowedOverLan(ctx.Request.Path) || !authorized)
+            || Lan.CookieMatches(ctx.Request.Cookies[Lan.WebCookie], lan.Token!)
+            || (Lan.IsWebhookWrite(ctx.Request) && Lan.Matches(ctx.Request.Headers.Authorization, lan.WebhookToken!));
+        if (!sameOrigin || !(openPath || loginPost || (Lan.AllowedOverLan(p) && authorized)))
         {
             ctx.Response.StatusCode = StatusCodes.Status403Forbidden;
             return;
@@ -128,7 +139,9 @@ app.Use(async (ctx, next) =>
         UpdateService.AppVersion = appVersion.ToString();
     ctx.Response.Headers.CacheControl = "no-store";
     // only the panel may be framed, and only by the settings page itself (the live preview)
-    ctx.Response.Headers["X-Frame-Options"] = ctx.Request.Path.StartsWithSegments("/panel") ? "SAMEORIGIN" : "DENY";
+    var panel = ctx.Request.Path.StartsWithSegments("/panel");
+    ctx.Response.Headers["X-Frame-Options"] = panel ? "SAMEORIGIN" : "DENY";
+    if (panel) ctx.Response.Headers["Content-Security-Policy"] = "frame-ancestors 'self'";
     await next();
 });
 
@@ -137,7 +150,8 @@ app.Use(async (ctx, next) =>
 app.MapGet("/api/pair", (ConfigStore cfg) =>
 {
     var lan = cfg.Get().Lan;
-    if (!lan.Enabled || lanCert is null) return Results.Json(new { enabled = false });
+    if (!lan.Enabled) return Results.Json(new { enabled = false });
+    if (lanCert is null) return Results.StatusCode(StatusCodes.Status503ServiceUnavailable);
     return Results.Json(new
     {
         enabled = true,
@@ -157,7 +171,57 @@ app.MapGet("/api/lan", (ConfigStore cfg) => Results.Json(new
     restartNeeded = cfg.Get().Lan.Enabled != (lanCert is not null) || (lanCert is not null && cfg.Get().Lan.Port != lanCfg.Port),
     hosts = Lan.Addresses(),
     fingerprint = lanCert is null ? null : Lan.Fingerprint(lanCert),
+    publicKeyPin = lanCert is null ? null : Lan.PublicKeyPin(lanCert),
 }));
+
+// ---------------------------------------------------------------- phone browser sign-in (Wi-Fi / Tailscale port only)
+// Opened as https://<pc>:<port>/login#<key> (the key stays in the fragment, so it never reaches logs or history
+// on the server side); the page posts it back once and the panel then runs on an HttpOnly cookie.
+const string LoginPage = """
+<!doctype html><html lang="tr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>PhoneBox</title><style>body{font:16px system-ui;background:#111;color:#eee;display:grid;place-items:center;min-height:90vh}
+form{display:grid;gap:12px;width:min(320px,90vw)}input,button{font:inherit;padding:12px;border-radius:10px;border:1px solid #444;background:#222;color:#eee}
+button{background:#2b6cff;border:0}p{color:#f88}</style></head><body>
+<form method="post" action="/login"><b>PhoneBox</b><input name="key" type="password" placeholder="Anahtar" autocomplete="off" required>
+<button>Giriş</button>__ERR__</form>
+<script>const k=decodeURIComponent(location.hash.slice(1));if(k){history.replaceState(null,'','/login');const f=document.forms[0];f.key.value=k;f.submit();}</script>
+</body></html>
+""";
+bool OnLanPort(HttpContext ctx) => lanCert is not null && ctx.Connection.LocalPort == lanCfg.Port;
+app.MapGet("/login", (HttpContext ctx) => OnLanPort(ctx)
+    ? Results.Content(LoginPage.Replace("__ERR__", ""), "text/html; charset=utf-8") : Results.NotFound());
+app.MapPost("/login", async (HttpContext ctx, ConfigStore cfg, ILogger<Program> log) =>
+{
+    if (!OnLanPort(ctx) || !ctx.Request.HasFormContentType) return Results.NotFound();
+    var key = (await ctx.Request.ReadFormAsync())["key"].ToString().Trim();
+    if (!Lan.CookieMatches(key, cfg.Get().Lan.Token!))
+    {
+        log.LogWarning("phone browser sign-in rejected from {ip}", ctx.Connection.RemoteIpAddress);
+        await Task.Delay(1000);
+        return Results.Content(LoginPage.Replace("__ERR__", "<p>Anahtar yanlış.</p>"), "text/html; charset=utf-8", statusCode: 401);
+    }
+    ctx.Response.Cookies.Append(Lan.WebCookie, key, new CookieOptions
+    {
+        HttpOnly = true, Secure = true, SameSite = SameSiteMode.Strict, Path = "/", MaxAge = TimeSpan.FromDays(365),
+    });
+    log.LogInformation("phone browser signed in from {ip}", ctx.Connection.RemoteIpAddress);
+    return Results.Redirect("/panel/", false);
+});
+
+// Local-only page (the 127.0.0.1 port) with a QR code that signs a phone browser in over Tailscale.
+app.MapGet("/iphone", (HttpContext ctx, ConfigStore cfg) =>
+{
+    if (ctx.Connection.LocalPort != Port || lanCert is null) return Results.NotFound();
+    var host = Lan.Addresses().FirstOrDefault(a => a.StartsWith("100.")) ?? Lan.Addresses().FirstOrDefault() ?? "127.0.0.1";
+    var url = $"https://{host}:{lanCfg.Port}/login#{cfg.Get().Lan.Token}";
+    return Results.Content($$"""
+<!doctype html><meta charset="utf-8"><title>PhoneBox iPhone</title>
+<body style="font:18px system-ui;text-align:center;padding:30px"><h2>iPhone kamerasıyla okut</h2>
+<div id="q" style="display:inline-block;padding:16px;background:#fff"></div><p>{{host}}:{{lanCfg.Port}}</p>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+<script>new QRCode(document.getElementById("q"), { text: {{JsonSerializer.Serialize(url)}}, width: 320, height: 320 });</script>
+""", "text/html; charset=utf-8");
+});
 
 app.MapGet("/api/update", (UpdateService upd, ConfigStore cfg) => Results.Json(new { status = upd.Status(), auto = cfg.Get().Updates.Auto, installed = UpdateService.RunningInstalled }));
 app.MapPost("/api/update/check", async (UpdateService upd) => { await upd.CheckAsync(); return Results.Json(upd.Status()); });
@@ -308,7 +372,7 @@ app.MapGet("/api/stream", async (HttpContext ctx, PushStore push, SessionMonitor
 {
     var ct = ctx.RequestAborted;
     var isPhone = ctx.Request.Headers.ContainsKey("X-PhoneBox-App");
-    var via = ctx.Connection.LocalPort == Port ? "USB/local" : "Wi-Fi";
+    var via = ctx.Connection.LocalPort == UsbPort ? "USB/ADB" : ctx.Connection.LocalPort == Port ? "local" : "Wi-Fi";
     log.LogInformation("live stream opened ({Who}, {Via})", isPhone ? "phone" : "other client", via);
     ctx.Response.ContentType = "text/event-stream";
     ctx.Response.Headers["X-Accel-Buffering"] = "no";
@@ -323,6 +387,14 @@ app.MapGet("/api/stream", async (HttpContext ctx, PushStore push, SessionMonitor
     push.Emitted += OnEmit;
     try
     {
+        Func<int[]?>? readWave = null;
+#if WINDOWS
+        if (ctx.Request.Query["wave"] == "1")
+            readWave = ctx.RequestServices.GetRequiredService<SpotifyWave>().Read;
+#endif
+        var media = ctx.RequestServices.GetRequiredService<MediaMonitor>();
+        int[]? sentWave = null;
+        var nextWave = 0L;
         var seq = push.Seq;
         var lastWork = "";
         var next = 0L;
@@ -343,7 +415,24 @@ app.MapGet("/api/stream", async (HttpContext ctx, PushStore push, SessionMonitor
                 }
                 next = now + 1000;
             }
-            await wake.WaitAsync(TimeSpan.FromMilliseconds(Math.Max(5, next - DateTimeOffset.UtcNow.ToUnixTimeMilliseconds())), ct);
+            var wakeAt = next;
+            if (readWave is not null && media.Snapshot() is { App: "Spotify", Playing: true })
+            {
+                if (now >= nextWave)
+                {
+                    var wave = readWave();
+                    if (!ReferenceEquals(wave, sentWave)) await Send("wave", wave ?? []);
+                    sentWave = wave;
+                    nextWave = now + 80;
+                }
+                wakeAt = Math.Min(wakeAt, nextWave);
+            }
+            else if (sentWave is not null)
+            {
+                await Send("wave", Array.Empty<int>());
+                sentWave = null;
+            }
+            await wake.WaitAsync(TimeSpan.FromMilliseconds(Math.Max(5, wakeAt - DateTimeOffset.UtcNow.ToUnixTimeMilliseconds())), ct);
         }
     }
     catch (OperationCanceledException) { }
@@ -376,7 +465,9 @@ app.MapPost("/api/approvals/{id}", (string id, string decision, ApprovalStore a)
 app.MapGet("/api/widget/{page}/{widget}", (string page, string widget, bool? force, CommandRunner runner) =>
     runner.Get(page, widget, force == true) is { } r ? Results.Json(r) : Results.NotFound());
 
-app.MapGet("/api/config", (ConfigStore cfg) => Results.Json(new { version = cfg.Version, config = cfg.Get().ToPublic() }));
+app.MapGet("/api/config", (ConfigStore cfg) => cfg.PanelSettings() is { } settings
+    ? Results.Json(settings)
+    : Results.StatusCode(StatusCodes.Status503ServiceUnavailable));
 
 app.MapGet("/api/art", (MediaMonitor media) =>
     media.Art is { } art ? Results.File(art.Bytes, art.Mime) : Results.NotFound());

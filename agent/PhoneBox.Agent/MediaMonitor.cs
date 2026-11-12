@@ -9,7 +9,7 @@ public sealed class MediaMonitor(ILogger<MediaMonitor> log) : BackgroundService
     private volatile MediaSnapshot? _snap;
     private string _trackKey = "";
     private int _artId;
-    private int _artTries;
+    private long _nextArtTry;
 
     public AlbumArt? Art { get; private set; }
     public MediaSnapshot? Snapshot() => _snap;
@@ -46,13 +46,13 @@ public sealed class MediaMonitor(ILogger<MediaMonitor> log) : BackgroundService
         if (key != _trackKey)
         {
             _trackKey = key;
-            _artTries = 0;
+            _nextArtTry = 0;
             Art = null;
         }
         // Spotify sometimes delivers the cover art a few seconds late; retry a few times.
-        if (Art is null && _artTries < 8 && props.Thumbnail is { } thumb)
+        if (Art is null && Environment.TickCount64 >= _nextArtTry && props.Thumbnail is { } thumb)
         {
-            _artTries++;
+            _nextArtTry = Environment.TickCount64 + 2500;
             try
             {
                 using var stream = await thumb.OpenReadAsync();

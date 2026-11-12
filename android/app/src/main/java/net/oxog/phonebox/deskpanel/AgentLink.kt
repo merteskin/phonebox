@@ -1,6 +1,7 @@
 package net.oxog.phonebox.deskpanel
 
 import android.content.Context
+import android.os.SystemClock
 import org.json.JSONObject
 import java.io.ByteArrayInputStream
 import java.io.InputStream
@@ -36,16 +37,33 @@ class AgentLink(context: Context) {
     private val prefs = context.getSharedPreferences("pairing", Context.MODE_PRIVATE)
     private val appVersion = context.packageManager.getPackageInfo(context.packageName, 0).versionName ?: ""
     private val background = Executors.newSingleThreadExecutor()
-    @Volatile private var lastPair = 0L
+    private var nextPair = 0L
     @Volatile private var preferredHost = 0
     @Volatile private var factory: Pair<String, SSLSocketFactory>? = null
 
     /** Opens a long-lived GET (the live stream) over the best route; null when the PC is unreachable. */
     fun stream(path: String): Pair<Route, Reply>? {
-        usb("GET", path, STREAM_READ_TIMEOUT)?.let { route = Route.USB; return Route.USB to it }
+        usb("GET", path, STREAM_READ_TIMEOUT)?.let {
+            route = Route.USB
+            if (it.code == 200) maybePair()
+            return Route.USB to it
+        }
         wifi("GET", path, STREAM_READ_TIMEOUT)?.let { route = Route.WIFI; return Route.WIFI to it }
         return null
     }
+
+    /** Check for an authenticated USB tunnel without interrupting the current Wi-Fi stream. */
+    fun hasUsb(): Boolean = usb("GET", "/api/state", 400)?.let { reply ->
+        reply.body.use { reply.code == 200 }
+    } ?: false
+
+    /**
+     * False only when the agent rejects our Wi-Fi key (401/403), e.g. after "New key" in Settings.
+     * Network errors count as authorized so a brief hiccup does not tear down a working stream.
+     */
+    fun wifiAuthorized(): Boolean = wifi("GET", "/api/state", 2000)?.let { reply ->
+        reply.body.use { reply.code != 401 && reply.code != 403 }
+    } ?: true
 
     /** Forwards a request (method + path with query) to the agent over the best available route. */
     fun request(method: String, pathAndQuery: String): Reply {
@@ -97,7 +115,60 @@ class AgentLink(context: Context) {
                 // try the next address
             }
         }
+        rescan(port, f)
         return null
+    }
+
+    private var lastScan = 0L
+
+    /**
+     * The PC's LAN address can change (DHCP). When none of the paired addresses answer, sweep this
+     * device's /24 for the agent port in the background; the pinned certificate proves it is our PC.
+     */
+    private fun rescan(port: Int, f: SSLSocketFactory) {
+        val now = SystemClock.elapsedRealtime()
+        if (lastScan != 0L && now - lastScan < 60_000) return
+        lastScan = now
+        Thread {
+            try {
+                val own = java.net.NetworkInterface.getNetworkInterfaces().toList()
+                    .filter { it.isUp && !it.isLoopback }
+                    .flatMap { it.inetAddresses.toList() }
+                    .filterIsInstance<java.net.Inet4Address>()
+                    .filter { it.isSiteLocalAddress }
+                val pool = Executors.newFixedThreadPool(32)
+                val found = java.util.concurrent.ConcurrentLinkedQueue<String>()
+                for (a in own) {
+                    val b = a.address
+                    for (n in 1..254) {
+                        if (n == (b[3].toInt() and 0xff)) continue
+                        val ip = "${b[0].toInt() and 0xff}.${b[1].toInt() and 0xff}.${b[2].toInt() and 0xff}.$n"
+                        pool.execute {
+                            try {
+                                java.net.Socket().use { it.connect(java.net.InetSocketAddress(ip, port), 400) }
+                                val c = URL("https://$ip:$port/api/state").openConnection() as HttpsURLConnection
+                                c.sslSocketFactory = f // handshake fails unless it is the paired PC's certificate
+                                c.hostnameVerifier = javax.net.ssl.HostnameVerifier { _, _ -> true }
+                                c.connectTimeout = 1500
+                                c.readTimeout = 2000
+                                c.responseCode
+                                c.disconnect()
+                                found.add(ip)
+                            } catch (_: Exception) {
+                            }
+                        }
+                    }
+                }
+                pool.shutdown()
+                pool.awaitTermination(30, java.util.concurrent.TimeUnit.SECONDS)
+                if (found.isNotEmpty()) {
+                    val old = prefs.getString("hosts", "")!!.split(',').filter { it.isNotBlank() && it !in found }
+                    prefs.edit().putString("hosts", (found.toList() + old).joinToString(",")).apply()
+                    preferredHost = 0
+                }
+            } catch (_: Exception) {
+            }
+        }.apply { isDaemon = true }.start()
     }
 
     private fun send(c: HttpURLConnection, method: String, readTimeout: Int = 4000): Reply {
@@ -116,17 +187,19 @@ class AgentLink(context: Context) {
     }
 
     /** While on USB, refresh the Wi-Fi pairing data about once a minute. */
+    @Synchronized
     private fun maybePair() {
-        val now = System.currentTimeMillis()
-        if (now - lastPair < 60_000) return
-        lastPair = now
+        val now = SystemClock.elapsedRealtime()
+        if (now < nextPair) return
+        nextPair = now + 60_000
         background.execute {
             try {
                 val c = URL("$USB_BASE/api/pair").openConnection() as HttpURLConnection
                 usbAuth(c)
                 c.connectTimeout = 800
                 c.readTimeout = 3000
-                val j = JSONObject(c.inputStream.bufferedReader().readText())
+                val j = try { JSONObject(c.inputStream.bufferedReader().use { it.readText() }) }
+                finally { c.disconnect() }
                 val e = prefs.edit()
                 if (j.optBoolean("enabled")) {
                     val hosts = j.getJSONArray("hosts")
@@ -141,6 +214,7 @@ class AgentLink(context: Context) {
                 }
                 e.apply()
             } catch (_: Exception) {
+                synchronized(this) { nextPair = SystemClock.elapsedRealtime() + 5_000 }
             }
         }
     }

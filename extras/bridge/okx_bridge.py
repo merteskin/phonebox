@@ -26,8 +26,8 @@ def push(key, payload, ttl=300):
          {"Content-Type": "application/json"}, "POST")
 
 
-def notify(title, text):
-    http(f"{AGENT}/api/notify", json.dumps({"title": title, "text": text}).encode(),
+def notify(title, text, **extra):
+    http(f"{AGENT}/api/notify", json.dumps({"title": title, "text": text, **extra}).encode(),
          {"Content-Type": "application/json"}, "POST")
 
 
@@ -52,6 +52,83 @@ def lvl(pct):  # PhoneBox renk seviyeleri
 
 _mkt = {"funding": {}, "dom": None}
 _spark = {"at": 0, "data": {}}
+FAST = float(os.getenv("BRIDGE_FAST", "3"))  # ana ekran fiyat kutularının yenileme aralığı (sn)
+FAST_COINS = ("BTC", "ETH", "TAO")
+_fast = {"at": 0.0}
+
+
+MOVES = json.loads(os.getenv("BRIDGE_MOVES", "[[15, 10], [10, 5], [5, 3]]"))  # [dakika, %]: ani hareket uyarısı
+_hist: dict[str, list] = {}   # coin -> [(zaman, fiyat)], son 15 dk
+_moved: dict[tuple, tuple] = {}  # (coin, dakika) -> (zaman, %)
+_flash: dict[str, float] = {}  # coin -> kutunun yanıp söneceği son an
+_fund = {"at": 0.0, "data": {}}
+
+
+def move_alert(c, last):
+    """Fiyat son N dakikadaki dip/tepeye göre eşiği aştıysa bildirim gönderir ve kutuyu 1 dk yakıp söndürür."""
+    now = time.time()
+    h = _hist.setdefault(c, [])
+    h.append((now, last))
+    span = max(m for m, _ in MOVES) * 60
+    while h and now - h[0][0] > span:
+        h.pop(0)
+    for mins, lim in MOVES:
+        w = [p for t, p in h if now - t <= mins * 60]
+        if len(w) < 2:
+            continue
+        lo, hi = min(w), max(w)
+        pct = (last / lo - 1) * 100 if last - lo >= hi - last else (last / hi - 1) * 100
+        if abs(pct) < lim:
+            continue
+        at, prev = _moved.get((c, mins), (0, 0))
+        if now - at >= mins * 60 or pct * prev < 0 or abs(pct) - abs(prev) >= lim / 2:
+            _moved[(c, mins)] = (now, pct)
+            _flash[c] = now + 60
+            try:
+                notify(f"{c} {pct:+.1f}% · son {mins} dk", f"Son fiyat {fmt(last)}", level="warn", wake=True, seconds=10)
+            except Exception:
+                pass
+        break  # en büyük eşik yeter
+
+
+def fast():
+    """Ana ekrandaki fiyat kutuları: OKX'in herkese açık ticker'ı, birkaç saniyede bir (key gerekmez)."""
+    if time.time() - _fund["at"] >= 60:
+        _fund["at"] = time.time()
+        for c in FAST_COINS:
+            try:
+                f = http(f"{OKX}/api/v5/public/funding-rate?instId={c}-USDT-SWAP")["data"][0]
+                _fund["data"][c] = float(f["fundingRate"]) * 100
+            except Exception:
+                pass
+    for c in FAST_COINS:
+        t = http(f"{OKX}/api/v5/market/ticker?instId={c}-USDT-SWAP")["data"][0]
+        last = float(t["last"])
+        ch = (last / float(t["open24h"]) - 1) * 100
+        move_alert(c, last)
+        fr = _fund["data"].get(c)
+        push("px_" + c.lower(), {"title": c, "value": fmt(last),
+                                 "sub": f"{ch:+.2f}% · 24s" + (f" · F {fr:+.3f}%" if fr is not None else ""),
+                                 "spark": (_spark["data"].get(c) or []) + [last],
+                                 "alert": time.time() < _flash.get(c, 0),
+                                 "color": "#22c55e" if ch >= 0 else "#ef4444"})
+    _fast["at"] = time.time()
+
+
+def home_pos(board):
+    """Ana ekran şeridi: açık pozisyonlar, bekleyen emirler ve kağıt pozisyonlar tek listede."""
+    it = []
+    for p in board["pos"]:
+        liq = f' · liq {(float(p["liq"]) / float(p["mark"]) - 1) * 100:+.1f}%' if p.get("liq") and p.get("mark") else ""
+        it.append({"label": f'{p["coin"]} {str(p.get("side") or "").upper()} {float(p.get("lev") or 0):.0f}x',
+                   "value": f'{p["upnl"]:+,.2f} ${liq}', "level": "ok" if p["upnl"] >= 0 else "error"})
+    for o in sorted(board["orders"], key=lambda o: abs(o.get("dist") or 999)):
+        dist = f' · {o["dist"]:+.1f}%' if o.get("dist") is not None else ""
+        it.append({"label": f'{o["coin"]} {o.get("dir") or ""} emri', "value": f'{fmt(o["px"])}{dist}'})
+    for p in board["paper"]:
+        it.append({"label": f'{p["coin"]} {str(p.get("side") or "").upper()} · kağıt',
+                   "value": f'{p["upnl"]:+,.2f} $ ({p["pct"]:+.1f}%)', "level": "ok" if p["upnl"] >= 0 else "error"})
+    push("home_pos", {"title": "Pozisyonlar ve emirler", "items": it or [{"label": "Açık pozisyon ya da emir yok", "value": ""}]})
 
 
 def tick():
@@ -114,10 +191,18 @@ def kriptobot():
     try:
         board = kripto_board(s)
         push("kripto", board)
+        try:
+            home_pos(board)
+        except Exception as e:
+            print(time.strftime("%H:%M:%S"), "pozisyon şeridi:", e)
         for c in board["coins"]:
-            if c["s"] in ("BTC", "ETH", "TAO"):
+            if c["s"] in FAST_COINS and time.time() - _fast["at"] > 15:  # hızlı döngü çalışmıyorsa yedek
                 push("px_" + c["s"].lower(), {"title": c["s"], "value": fmt(c["px"]), "sub": f'{c["ch"]:+.2f}% · 24s', "spark": c["spark"],
                                               "color": "#22c55e" if c["ch"] >= 0 else "#ef4444"})
+        try:
+            charts([c for c in ("TAO", "BTC", "ETH") if any(x["s"] == c for x in board["coins"])])
+        except Exception as e:
+            print(time.strftime("%H:%M:%S"), "grafik hatası:", e)
         k = board["kpi"]
         if k.get("d7") is not None:
             push("realized", {"title": "Realized 7g", "value": f'{k["d7"]:+,.2f}', "unit": "USDT",
@@ -196,6 +281,35 @@ def sparks(coins):
     return out
 
 
+CHART_BARS = (("1m", 15), ("5m", 60), ("15m", 120), ("1H", 300), ("4H", 900), ("1D", 1800))  # bar -> yenileme sn
+_chart: dict[tuple, tuple] = {}
+
+
+def charts(coins):
+    """Ana ekrandaki fiyat kutusuna dokununca açılan grafik için mum verisi (KriptoBot /api/candles, sadece GET).
+    Her coin için tek push: chart_<coin> = {"bars": {"5m": [[t,o,h,l,c],...], ...}}."""
+    for c in coins:
+        bars, changed = {}, False
+        for bar, every in CHART_BARS:
+            at, d = _chart.get((c, bar), (0, None))
+            if time.time() - at >= every or d is None:
+                try:
+                    if bar == "1m":  # KriptoBot 1m vermiyor: OKX'in herkese açık mum verisi (key gerekmez, yeni -> eski)
+                        raw = [[float(v) for v in x[:5]] for x in reversed(http(
+                            f"{OKX}/api/v5/market/candles?instId={c}-USDT-SWAP&bar=1m&limit=120")["data"])]
+                    else:
+                        raw = http(f"{KRIPTOBOT}/api/candles?inst={c}-USDT-SWAP&bar={bar}")["data"][-120:]
+                    d = [[int(x[0] // 1000)] + [round(v, 6) for v in x[1:5]] for x in raw]
+                    _chart[(c, bar)] = (time.time(), d)
+                    changed = True
+                except Exception:
+                    pass
+            if d:
+                bars[bar] = d
+        if changed and bars:
+            push("chart_" + c.lower(), {"title": c, "bars": bars}, ttl=3600)
+
+
 def kripto_board(s):
     """Özel "kripto" widget'ı için tek JSON: KPI, coin tablosu, pozisyonlar, emirler, kağıt, kapanışlar, alarmlar."""
     tick_ = ((s.get("tickers") or {}).get("data") or {})
@@ -256,10 +370,111 @@ def kripto_board(s):
     }
 
 
-if __name__ == "__main__":
+def air_loop():
+    """Hava temizleyici (miio_air.py + air.json) varsa 15 sn'de bir "air" push'lar.
+    Panel popup'ı komutu "air_cmd" push'u olarak bırakır (?value=auto); her saniye bakılır."""
+    try:
+        import miio_air
+    except ImportError:
+        return
+    last_read, done, first = 0.0, None, True
     while True:
         try:
-            tick()
-        except Exception as e:
-            print(time.strftime("%H:%M:%S"), "hata:", e)
-        time.sleep(PERIOD)
+            c = http(f"{AGENT}/api/push/air_cmd")
+            at = (c or {}).get("at")
+            if first:
+                done = at  # açılışta eski komutu tekrar çalıştırma
+            elif at and at != done:
+                done = at
+                d = c.get("data")
+                miio_air.command(str((d.get("cmd") if isinstance(d, dict) else d) or "status").split())
+                last_read = 0
+        except Exception:
+            pass  # komut yok (404) ya da cihaz o an cevap vermedi
+        first = False
+        if time.time() - last_read >= 15:
+            last_read = time.time()
+            try:
+                a = miio_air.read()
+                if a is None:
+                    return  # air.json ya da pycryptodome yok
+                push("air", a, ttl=120)
+            except Exception:
+                pass  # push süresi dolunca kutu boşalır
+        time.sleep(1)
+
+
+def lamp_loop():
+    """Tapo lamba (tapo_lamp.py + tapo.json) varsa 10 sn'de bir "lamp" push'lar.
+    Panel popup'ı komutu "lamp_cmd" push'u olarak bırakır (?value=toggle / bright 40); her saniye bakılır."""
+    try:
+        import tapo_lamp
+    except ImportError:
+        return
+    last_read, done, first = 0.0, None, True
+    while True:
+        try:
+            c = http(f"{AGENT}/api/push/lamp_cmd")
+            at = (c or {}).get("at")
+            if first:
+                done = at  # açılışta eski komutu tekrar çalıştırma
+            elif at and at != done:
+                done = at
+                d = c.get("data")
+                tapo_lamp.command(str((d.get("cmd") if isinstance(d, dict) else d) or "status").split())
+                last_read = 0
+        except Exception:
+            pass  # komut yok (404) ya da ampul o an cevap vermedi
+        first = False
+        if time.time() - last_read >= 10:
+            last_read = time.time()
+            try:
+                a = tapo_lamp.read()
+                if a is None:
+                    return  # tapo.json yok
+                push("lamp", a, ttl=90)
+            except Exception:
+                pass  # push süresi dolunca kutu boşalır
+        time.sleep(1)
+
+
+def grok_loop():
+    """Grok masaüstü uygulamasının yazdığı özet dosyasını (GROK_OZET, varsayılan
+    Documents/grok-kutu/ozet.md) 30 sn'de bir okur, değiştiyse "grok" push'lar.
+    Grok'a sadece bu klasörde yetki verilir; köprü dosyayı yalnızca okur."""
+    path = os.getenv("GROK_OZET", os.path.join(os.path.expanduser("~"), "Documents", "grok-kutu", "ozet.md"))
+    sent, sent_at = None, 0.0
+    while True:
+        try:
+            st = os.stat(path)
+            key = (st.st_mtime, st.st_size)
+            if key != sent or time.time() - sent_at > 3600:
+                with open(path, encoding="utf-8-sig", errors="replace") as f:
+                    text = f.read(20000)
+                push("grok", {"title": "Grok özeti", "text": text, "mtime": int(st.st_mtime * 1000)}, ttl=7200)
+                sent, sent_at = key, time.time()
+        except FileNotFoundError:
+            sent = None
+        except Exception:
+            pass  # agent o an kapalı: sonraki turda yine denenir
+        time.sleep(30)
+
+
+if __name__ == "__main__":
+    import threading
+    threading.Thread(target=air_loop, daemon=True).start()
+    threading.Thread(target=lamp_loop, daemon=True).start()
+    threading.Thread(target=grok_loop, daemon=True).start()
+    full = 0.0
+    while True:
+        if time.time() - full >= PERIOD:
+            full = time.time()
+            try:
+                tick()
+            except Exception as e:
+                print(time.strftime("%H:%M:%S"), "hata:", e)
+        try:
+            fast()
+        except Exception:
+            pass  # OKX'e ulaşılamadı: kutular 20 sn'lik KriptoBot verisine döner
+        time.sleep(FAST)

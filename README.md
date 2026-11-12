@@ -177,9 +177,10 @@ curl -X POST http://127.0.0.1:8765/api/refresh                                  
 Notifications take `title`, `text`, `level`, `vibrate`, `seconds`, `wake` (light up the night screen) and `page`.
 `GET /api/push` lists the values and `DELETE /api/push/<key>` removes one; values survive restarts.
 
-From this PC no key is needed. With Wi-Fi on, other machines on the network or Tailscale can use the same endpoints
-on `https://<pc>:8766` with the **webhook key** from the settings (`Authorization: Bearer <key>`, or `?token=<key>`
-for senders that cannot set headers). That key opens only the webhook endpoints, never the phone API.
+From this PC no key is needed. With Wi-Fi on, other machines on the network or Tailscale can use
+`POST` or `PUT /api/push/<key>` and `POST /api/notify` on `https://<pc>:8766` with the **webhook key**
+from Settings in the `Authorization: Bearer <key>` header. Copy the example in **Settings › Webhooks**
+to verify the agent's TLS public key when using curl.
 
 ## Rules
 
