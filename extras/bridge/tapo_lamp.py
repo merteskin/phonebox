@@ -77,7 +77,12 @@ def read():
     """Panel için kısa durum; tapo.json yoksa None."""
     if not os.path.exists(CFG):
         return None
-    i = client().call("get_device_info")
+    try:
+        i = client().call("get_device_info")
+    except Exception:
+        from lan_find import rediscover  # DHCP IP değiştirdiyse MAC ile bul
+        rediscover(CFG)
+        raise
     return {"on": bool(i.get("device_on")), "bright": i.get("brightness"),
             "temp": i.get("color_temp"), "hue": i.get("hue"), "sat": i.get("saturation")}
 

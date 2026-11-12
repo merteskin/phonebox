@@ -82,7 +82,13 @@ def read():
             _dev = Miio(c["ip"], c["token"])
         except (OSError, ValueError, KeyError, ImportError):
             return None
-    p = _dev.props(["power", "mode", "aqi", "humidity", "temp_dec", "favorite_level", "filter1_life", "f1_hour_used", "f1_hour"])
+    try:
+        p = _dev.props(["power", "mode", "aqi", "humidity", "temp_dec", "favorite_level", "filter1_life", "f1_hour_used", "f1_hour"])
+    except Exception:
+        from lan_find import rediscover  # DHCP IP değiştirdiyse MAC ile bul, sonraki turda yeni IP
+        if rediscover(CFG):
+            _dev = None
+        raise
     return {"on": p["power"] == "on", "mode": p["mode"], "pm25": p["aqi"], "hum": p["humidity"],
             "temp": (p["temp_dec"] or 0) / 10, "fav": p["favorite_level"], "filter": p["filter1_life"],
             "filterUsedH": p["f1_hour_used"], "filterH": p["f1_hour"]}
