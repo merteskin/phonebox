@@ -1670,9 +1670,17 @@ W.grok = {
       sub = h('span', 'w-sub', '');
       const title = h('div', 'w-title', '🛰️ ' + (o.title || d.title || 'Grok özeti'), sub);
       if (compact) {
+        // Short headlines: skip the price line (tiles already show prices), drop sources/times and bracketed details.
         const lines = String(d.text || '').split(/\r?\n/).map((l) => l.trim())
-          .filter((l) => /^(?:[-*•]|\d+[.)])\s+/.test(l)).map((l) => l.replace(/^(?:[-*•]|\d+[.)])\s+/, '').replace(/\*\*/g, ''));
-        box.replaceChildren(title, h('div', 'grok-c', lines.slice(0, 3).map((l) => h('div', 'grok-cl', l))));
+          .filter((l) => /^(?:[-*•]|\d+[.)])\s+/.test(l))
+          .map((l) => l.replace(/^(?:[-*•]|\d+[.)])\s+/, '').replace(/\*\*/g, '')
+            .replace(/\s+[—–]\s+.*$/, '').replace(/\s*\([^)]*\)/g, '').replace(/[.;,\s]+$/, ''))
+          .filter((l) => l && !/^fiyatlar\s*:/i.test(l));
+        const item = (l) => {
+          const m = l.match(/^([^:]{2,18}):\s*(.+)$/);
+          return h('div', 'grok-cl', m ? [h('b', null, m[1]), ' ' + m[2]] : l);
+        };
+        box.replaceChildren(title, h('div', 'grok-c', lines.slice(0, 2).map(item)));
       } else box.replaceChildren(title, grokBody(d.text));
       age();
       paintGrok();

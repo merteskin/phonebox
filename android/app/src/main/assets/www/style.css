@@ -903,3 +903,8 @@ body.night #night { display: flex; }
 .grok-h { font-weight: 700; margin-top: .7em; letter-spacing: .01em; }
 .grok-li { padding-left: 1.1em; }
 .grok-li::before { left: .2em; color: rgb(var(--ambient)); }
+/* Grok home tile: each headline wraps to two lines, label in bold */
+.grok-c { gap: 5px; }
+.grok-cl, .grok-cl:first-child { white-space: normal; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; color: #cfd6df; line-height: 1.35; }
+.grok-cl b { color: rgb(var(--ambient)); font-weight: 700; }
+.grok-cl { flex: none; overflow: hidden; text-overflow: ellipsis; }
