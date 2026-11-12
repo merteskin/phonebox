@@ -500,7 +500,14 @@ body.offline .offline-msg { display: flex; }
 .grok-li { padding-left: 12px; position: relative; }
 .grok-li::before { content: "•"; position: absolute; left: 2px; color: var(--muted); }
 .grok-p { color: var(--muted); }
-.grok-stale .grok-b, .grok-stale .w-title { opacity: .45; }
+.w-grok { cursor: pointer; }
+.grok-c { flex: 1; min-height: 0; overflow: hidden; display: flex; flex-direction: column; gap: 2px; font-size: 12px; line-height: 1.3; }
+.grok-cl { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--muted); }
+.grok-cl:first-child { color: inherit; }
+#gSheet .gs-body { flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 8px; font-size: 19px; line-height: 1.45; padding: 4px 8px 24px; }
+#gSheet .grok-h { font-size: 22px; margin-top: 10px; }
+#gSheet .grok-li { padding-left: 20px; }
+.grok-stale .grok-c, .grok-stale .grok-b, .grok-stale .w-title { opacity: .45; }
 .push-empty { flex: 1; display: flex; flex-direction: column; justify-content: center; gap: 4px; color: var(--muted); font-size: 12px; }
 .push-empty code { font: 10.5px "Roboto Mono", monospace; color: var(--dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .push-big { flex: 1; min-height: 0; display: flex; flex-direction: column; justify-content: center; gap: 2px; }

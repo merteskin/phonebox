@@ -1629,14 +1629,28 @@ function grokBody(text) {
   }
   return body;
 }
+let grokOpen = false;
+function grokSub() { const m = Number(D.push.grok?.data?.mtime) || D.push.grok?.at; return m ? 'güncellendi ' + ago(m) : 'özet yok'; }
+function paintGrok() {
+  if (!grokOpen) return;
+  $('gsSub').textContent = grokSub();
+  const t = D.push.grok?.data?.text;
+  const b = grokBody(t || 'Özet yok. Grok, Belgeler/grok-kutu/ozet.md dosyasına yazınca burada görünür.');
+  $('gsBody').replaceChildren(...b.childNodes);
+}
+function openGrok() { grokOpen = true; $('gSheet').hidden = false; $('gsBody').scrollTop = 0; paintGrok(); }
+function closeGrok() { grokOpen = false; $('gSheet').hidden = true; }
+$('gsClose').addEventListener('click', () => { haptic(); closeGrok(); });
 W.grok = {
   needs: ['push', 'tick'],
-  create(box, { o }) {
+  create(box, { o, w }) {
     const key = o.key || 'grok';
+    const compact = (w?.h || 9) <= 2;
     let lastAt = -1, sub = null, mtime = 0;
+    box.addEventListener('click', () => { haptic(); openGrok(); });
     const age = () => {
       if (!sub) return;
-      sub.textContent = mtime ? 'güncellendi ' + ago(mtime) : '';
+      sub.textContent = mtime ? (compact ? ago(mtime) : 'güncellendi ' + ago(mtime)) : '';
       box.classList.toggle('grok-stale', !mtime || Date.now() - mtime > GROK_STALE);
     };
     const render = () => {
@@ -1654,11 +1668,17 @@ W.grok = {
       const d = item.data || {};
       mtime = Number(d.mtime) || item.at;
       sub = h('span', 'w-sub', '');
-      box.replaceChildren(h('div', 'w-title', '🛰️ ' + (o.title || d.title || 'Grok özeti'), sub), grokBody(d.text));
+      const title = h('div', 'w-title', '🛰️ ' + (o.title || d.title || 'Grok özeti'), sub);
+      if (compact) {
+        const lines = String(d.text || '').split(/\r?\n/).map((l) => l.trim())
+          .filter((l) => /^(?:[-*•]|\d+[.)])\s+/.test(l)).map((l) => l.replace(/^(?:[-*•]|\d+[.)])\s+/, '').replace(/\*\*/g, ''));
+        box.replaceChildren(title, h('div', 'grok-c', lines.slice(0, 3).map((l) => h('div', 'grok-cl', l))));
+      } else box.replaceChildren(title, grokBody(d.text));
       age();
+      paintGrok();
     };
     render();
-    return { update: render, tick: age };
+    return { update: render };
   },
 };
 
