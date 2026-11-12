@@ -15,6 +15,15 @@ if (PHONE) document.documentElement.classList.add('phone');
 // A tablet's browser (iPad over Tailscale): the normal layout sideways, a 4-column scrolling grid upright (CSS).
 const TABLET_WEB = !bridge && !PHONE && navigator.maxTouchPoints > 0;
 if (TABLET_WEB) document.documentElement.classList.add('tablet-web');
+// In a browser (above all an iPad/iPhone home-screen web app, which keeps the status bar) 100vh is taller than the
+// visible area, so the bottom row was cut off. Size the page from the real visible height instead.
+if (!bridge) {
+  document.documentElement.classList.add('web');
+  const fitHeight = () => document.documentElement.style.setProperty('--app-h', window.innerHeight + 'px');
+  fitHeight();
+  window.addEventListener('resize', fitHeight);
+  window.addEventListener('orientationchange', () => setTimeout(fitHeight, 300));
+}
 // Live preview inside the agent's layout editor: the layout comes from the editor (unsaved), not from the agent.
 const PREVIEW = new URLSearchParams(location.search).has('preview') && window.parent !== window;
 

@@ -912,3 +912,7 @@ body.night #night { display: flex; }
 .grok-c { overflow-y: auto; touch-action: pan-y; overscroll-behavior: contain; scrollbar-width: none; margin-top: 3px; gap: 4px; }
 .grok-c::-webkit-scrollbar { display: none; }
 .grok-cl, .grok-cl:first-child { padding: 5px 9px; border-radius: 9px; background: rgba(255, 255, 255, .045); }
+/* Browser / home-screen web app: fit the visible height (set from JS) and keep clear of the home indicator. */
+.web #pager, .web .page { height: var(--app-h, 100dvh); }
+.web .page { padding-bottom: calc(17px + env(safe-area-inset-bottom)); }
+.web #dots { bottom: env(safe-area-inset-bottom); }
