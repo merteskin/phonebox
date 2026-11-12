@@ -1680,7 +1680,7 @@ W.grok = {
           const m = l.match(/^([^:]{2,18}):\s*(.+)$/);
           return h('div', 'grok-cl', m ? [h('b', null, m[1]), ' ' + m[2]] : l);
         };
-        box.replaceChildren(title, h('div', 'grok-c', lines.slice(0, 2).map(item)));
+        box.replaceChildren(title, h('div', 'grok-c', lines.map(item)));
       } else box.replaceChildren(title, grokBody(d.text));
       age();
       paintGrok();
