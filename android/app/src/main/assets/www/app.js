@@ -1687,7 +1687,7 @@ W.grok = {
           .filter((l) => l && !/^[^:]{0,24}fiyat[^:]{0,12}:/i.test(l));
         const item = (l) => {
           const m = l.match(/^([^:]{2,18}):\s*(.+)$/);
-          return h('div', 'grok-cl', m ? [h('b', null, m[1]), ' ' + m[2]] : l);
+          return h('div', 'grok-cl', h('span', 'grok-t', m ? [h('b', null, m[1]), ' ' + m[2]] : l));
         };
         box.replaceChildren(title, h('div', 'grok-c', lines.map(item)));
       } else box.replaceChildren(title, grokBody(d.text));
