@@ -1606,6 +1606,62 @@ W.command = {
   },
 };
 
+// ---------------------------------------------------------------- grok: Documents\grok-kutu\ozet.md (push key "grok", okx_bridge grok_loop)
+const GROK_STALE = 6 * 3600_000;
+function grokInline(t) {
+  const out = [];
+  String(t).split(/(\*\*[^*]+\*\*)/).forEach((p) => {
+    if (p.startsWith('**') && p.endsWith('**') && p.length > 4) out.push(h('b', null, p.slice(2, -2)));
+    else if (p) out.push(document.createTextNode(p));
+  });
+  return out;
+}
+function grokBody(text) {
+  const body = h('div', 'grok-b');
+  for (const raw of String(text || '').split(/\r?\n/)) {
+    const l = raw.trim();
+    if (!l || /^[-*_]{3,}$/.test(l)) continue;
+    const m = l.match(/^(#{1,6})\s+(.*)$/);
+    if (m) { body.append(h('div', 'grok-h', ...grokInline(m[2]))); continue; }
+    const li = l.match(/^(?:[-*•]|\d+[.)])\s+(.*)$/);
+    if (li) { body.append(h('div', 'grok-li', ...grokInline(li[1]))); continue; }
+    body.append(h('div', 'grok-p', ...grokInline(l)));
+  }
+  return body;
+}
+W.grok = {
+  needs: ['push', 'tick'],
+  create(box, { o }) {
+    const key = o.key || 'grok';
+    let lastAt = -1, sub = null, mtime = 0;
+    const age = () => {
+      if (!sub) return;
+      sub.textContent = mtime ? 'güncellendi ' + ago(mtime) : '';
+      box.classList.toggle('grok-stale', !mtime || Date.now() - mtime > GROK_STALE);
+    };
+    const render = () => {
+      const item = D.push[key];
+      if (!item) {
+        if (lastAt === 0) return;
+        lastAt = 0; sub = null;
+        box.classList.add('grok-stale');
+        box.replaceChildren(h('div', 'w-title', o.title || 'Grok özeti'),
+          h('div', 'push-empty', 'Özet yok', h('code', null, 'Belgeler/grok-kutu/ozet.md')));
+        return;
+      }
+      if (item.at === lastAt) { age(); return; }
+      lastAt = item.at;
+      const d = item.data || {};
+      mtime = Number(d.mtime) || item.at;
+      sub = h('span', 'w-sub', '');
+      box.replaceChildren(h('div', 'w-title', '🛰️ ' + (o.title || d.title || 'Grok özeti'), sub), grokBody(d.text));
+      age();
+    };
+    render();
+    return { update: render, tick: age };
+  },
+};
+
 W.push = {
   needs: ['push', 'tick'],
   create(box, { o }) {
@@ -2524,7 +2580,7 @@ W.image = {
 
 const WIDGET_ICONS = { clock: '🕒', weather: '⛅', forecast: '🌦️', media: '🎵', stat: '📈', gauge: '⏲️', chart: '📊', meters: '💾', quotas: '✳️', sessions: '🤖',
   github: '🐙', processes: '⚙️', shortcuts: '🎛️', button: '🔘', worldclock: '🌍', calendar: '📅', pomodoro: '🍅', countdown: '⏳', note: '📝', command: '💻',
-  push: '📡', inbox: '📬', label: '🔤', analog: '🕰️', progress: '📆', stopwatch: '⏱️', timer: '⏲️', counter: '🔢', breathe: '🫁', quote: '💬',
+  push: '📡', grok: '🛰️', inbox: '📬', label: '🔤', analog: '🕰️', progress: '📆', stopwatch: '⏱️', timer: '⏲️', counter: '🔢', breathe: '🫁', quote: '💬',
   checklist: '✅', battery: '🔋', topprocs: '🔥', quotaring: '🎯', volume: '🔊', sun: '🌅', air: '🍃', hackernews: '📰', exchange: '💱', crypto: '🪙', image: '🖼️' };
 
 // ================================================================= pages

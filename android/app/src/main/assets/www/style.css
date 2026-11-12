@@ -495,6 +495,12 @@ body.offline .offline-msg { display: flex; }
 /* ---------- pushed value, notifications ---------- */
 .w-push { padding: 9px 12px; display: flex; flex-direction: column; gap: 3px; }
 .w-push .w-title { color: var(--c, var(--muted)); }
+.grok-b { flex: 1; min-height: 0; overflow-y: auto; font-size: 13px; line-height: 1.4; display: flex; flex-direction: column; gap: 3px; }
+.grok-h { font-weight: 600; color: var(--text, #fff); margin-top: 4px; }
+.grok-li { padding-left: 12px; position: relative; }
+.grok-li::before { content: "•"; position: absolute; left: 2px; color: var(--muted); }
+.grok-p { color: var(--muted); }
+.grok-stale .grok-b, .grok-stale .w-title { opacity: .45; }
 .push-empty { flex: 1; display: flex; flex-direction: column; justify-content: center; gap: 4px; color: var(--muted); font-size: 12px; }
 .push-empty code { font: 10.5px "Roboto Mono", monospace; color: var(--dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .push-big { flex: 1; min-height: 0; display: flex; flex-direction: column; justify-content: center; gap: 2px; }

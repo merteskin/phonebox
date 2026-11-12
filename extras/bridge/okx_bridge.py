@@ -438,10 +438,33 @@ def lamp_loop():
         time.sleep(1)
 
 
+def grok_loop():
+    """Grok masaüstü uygulamasının yazdığı özet dosyasını (GROK_OZET, varsayılan
+    Documents/grok-kutu/ozet.md) 30 sn'de bir okur, değiştiyse "grok" push'lar.
+    Grok'a sadece bu klasörde yetki verilir; köprü dosyayı yalnızca okur."""
+    path = os.getenv("GROK_OZET", os.path.join(os.path.expanduser("~"), "Documents", "grok-kutu", "ozet.md"))
+    sent, sent_at = None, 0.0
+    while True:
+        try:
+            st = os.stat(path)
+            key = (st.st_mtime, st.st_size)
+            if key != sent or time.time() - sent_at > 3600:
+                with open(path, encoding="utf-8", errors="replace") as f:
+                    text = f.read(20000)
+                push("grok", {"title": "Grok özeti", "text": text, "mtime": int(st.st_mtime * 1000)}, ttl=7200)
+                sent, sent_at = key, time.time()
+        except FileNotFoundError:
+            sent = None
+        except Exception:
+            pass  # agent o an kapalı: sonraki turda yine denenir
+        time.sleep(30)
+
+
 if __name__ == "__main__":
     import threading
     threading.Thread(target=air_loop, daemon=True).start()
     threading.Thread(target=lamp_loop, daemon=True).start()
+    threading.Thread(target=grok_loop, daemon=True).start()
     full = 0.0
     while True:
         if time.time() - full >= PERIOD:
