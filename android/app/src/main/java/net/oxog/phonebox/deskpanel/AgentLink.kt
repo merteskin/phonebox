@@ -115,7 +115,60 @@ class AgentLink(context: Context) {
                 // try the next address
             }
         }
+        rescan(port, f)
         return null
+    }
+
+    private var lastScan = 0L
+
+    /**
+     * The PC's LAN address can change (DHCP). When none of the paired addresses answer, sweep this
+     * device's /24 for the agent port in the background; the pinned certificate proves it is our PC.
+     */
+    private fun rescan(port: Int, f: SSLSocketFactory) {
+        val now = SystemClock.elapsedRealtime()
+        if (lastScan != 0L && now - lastScan < 60_000) return
+        lastScan = now
+        Thread {
+            try {
+                val own = java.net.NetworkInterface.getNetworkInterfaces().toList()
+                    .filter { it.isUp && !it.isLoopback }
+                    .flatMap { it.inetAddresses.toList() }
+                    .filterIsInstance<java.net.Inet4Address>()
+                    .filter { it.isSiteLocalAddress }
+                val pool = Executors.newFixedThreadPool(32)
+                val found = java.util.concurrent.ConcurrentLinkedQueue<String>()
+                for (a in own) {
+                    val b = a.address
+                    for (n in 1..254) {
+                        if (n == (b[3].toInt() and 0xff)) continue
+                        val ip = "${b[0].toInt() and 0xff}.${b[1].toInt() and 0xff}.${b[2].toInt() and 0xff}.$n"
+                        pool.execute {
+                            try {
+                                java.net.Socket().use { it.connect(java.net.InetSocketAddress(ip, port), 400) }
+                                val c = URL("https://$ip:$port/api/state").openConnection() as HttpsURLConnection
+                                c.sslSocketFactory = f // handshake fails unless it is the paired PC's certificate
+                                c.hostnameVerifier = javax.net.ssl.HostnameVerifier { _, _ -> true }
+                                c.connectTimeout = 1500
+                                c.readTimeout = 2000
+                                c.responseCode
+                                c.disconnect()
+                                found.add(ip)
+                            } catch (_: Exception) {
+                            }
+                        }
+                    }
+                }
+                pool.shutdown()
+                pool.awaitTermination(30, java.util.concurrent.TimeUnit.SECONDS)
+                if (found.isNotEmpty()) {
+                    val old = prefs.getString("hosts", "")!!.split(',').filter { it.isNotBlank() && it !in found }
+                    prefs.edit().putString("hosts", (found.toList() + old).joinToString(",")).apply()
+                    preferredHost = 0
+                }
+            } catch (_: Exception) {
+            }
+        }.apply { isDaemon = true }.start()
     }
 
     private fun send(c: HttpURLConnection, method: String, readTimeout: Int = 4000): Reply {
