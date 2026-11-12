@@ -922,3 +922,6 @@ body.night #night { display: flex; }
 /* clamp on the inner text so the row padding can't show a third line */
 .grok-cl, .grok-cl:first-child { display: block; max-height: none; }
 .grok-t { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+/* Grok home tile: three whole sentences, no clamp */
+.grok-t { display: block; overflow: visible; -webkit-line-clamp: unset; }
+.grok-c { gap: 3px; } .grok-cl, .grok-cl:first-child { padding: 3px 8px; font-size: 12px; line-height: 1.3; }

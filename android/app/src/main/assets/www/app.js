@@ -1679,12 +1679,21 @@ W.grok = {
       sub = h('span', 'w-sub', '');
       const title = h('div', 'w-title', '🛰️ ' + (o.title || d.title || 'Grok özeti'), sub);
       if (compact) {
-        // Short headlines: skip the price line (tiles already show prices), drop sources/times and bracketed details.
-        const lines = String(d.text || '').split(/\r?\n/).map((l) => l.trim())
-          .filter((l) => /^(?:[-*•]|\d+[.)])\s+/.test(l))
-          .map((l) => l.replace(/^(?:[-*•]|\d+[.)])\s+/, '').replace(/\*\*/g, '')
-            .replace(/\s+[—–]\s+.*$/, '').replace(/\s*\([^)]*\)/g, '').replace(/[.;,\s]+$/, ''))
-          .filter((l) => l && !/^[^:]{0,24}fiyat[^:]{0,12}:/i.test(l));
+        // Three headlines, each one whole sentence. A "## Ana sayfa" section in ozet.md wins; otherwise the first
+        // sentence of the top "Öne çıkanlar" bullets (Grok lists them by importance), without the price line
+        // (the tiles show prices), sources, times or bracketed details.
+        const secs = {}; let sec = '';
+        for (const raw of String(d.text || '').split(/\r?\n/)) {
+          const l = raw.trim(), hd = l.match(/^#{2,}\s*(.+)$/);
+          if (hd) { sec = hd[1].toLowerCase(); continue; }
+          if (/^(?:[-*•]|\d+[.)])\s+/.test(l)) (secs[sec] ||= []).push(l.replace(/^(?:[-*•]|\d+[.)])\s+/, ''));
+        }
+        const pick = Object.keys(secs).find((k) => /ana ?sayfa|kısa/.test(k))
+          || Object.keys(secs).find((k) => /öne çıkan/.test(k)) || Object.keys(secs)[0];
+        const lines = (secs[pick] || [])
+          .map((l) => l.replace(/\*\*/g, '').replace(/\s+[—–]\s+.*$/, '').replace(/\s*\([^)]*\)/g, '')
+            .split(/;\s+|\.\s+(?=[A-ZÇĞİÖŞÜ0-9@])/)[0].replace(/[.;,:\s]+$/, ''))
+          .filter((l) => l && !/^[^:]{0,24}fiyat[^:]{0,12}:/i.test(l)).slice(0, 3);
         const item = (l) => {
           const m = l.match(/^([^:]{2,18}):\s*(.+)$/);
           return h('div', 'grok-cl', h('span', 'grok-t', m ? [h('b', null, m[1]), ' ' + m[2]] : l));
