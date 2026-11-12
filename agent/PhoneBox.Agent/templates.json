@@ -37,3 +37,4 @@
   {"id": "calm", "title": "Calm", "icon": "🫁", "desc": "Breathing exercise, a clock face and a quote.", "widgets": [{"type": "breathe", "x": 0, "y": 0, "w": 7, "h": 6}, {"type": "analog", "x": 7, "y": 0, "w": 5, "h": 4}, {"type": "quote", "x": 7, "y": 4, "w": 5, "h": 2}]}
 ]
 
+
